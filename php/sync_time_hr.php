@@ -96,8 +96,8 @@ try {
 
     $pdo->beginTransaction();
 
-    $selectStmt = $pdo->prepare("SELECT id, `start`, `end` FROM `{$table}` WHERE iduser = :iduser AND `data` = :data LIMIT 1");
-    $insertStmt = $pdo->prepare("INSERT INTO `{$table}` (iduser, `data`, `start`, `end`) VALUES (:iduser, :data, :start, :end)");
+    $selectStmt = $pdo->prepare("SELECT id, `start`, `end` FROM `{$table}` WHERE iduser = :iduser AND `date` = :date LIMIT 1");
+    $insertStmt = $pdo->prepare("INSERT INTO `{$table}` (iduser, `date`, `start`, `end`) VALUES (:iduser, :date, :start, :end)");
     $updateStmt = $pdo->prepare("UPDATE `{$table}` SET `start` = :start, `end` = :end WHERE id = :id");
 
     $inserted = 0;
@@ -111,16 +111,16 @@ try {
         }
 
         $iduser = trim((string)($row['iduser'] ?? ''));
-        $dataValue = normalizeDateValue((string)($row['data'] ?? ($row['date'] ?? '')));
+        $dateValue = normalizeDateValue((string)($row['date'] ?? ($row['data'] ?? '')));
         $startValue = normalizeTimeValue(isset($row['start']) ? (string)$row['start'] : null);
         $endValue = normalizeTimeValue(isset($row['end']) ? (string)$row['end'] : null);
 
-        if ($iduser === '' || $dataValue === null) {
+        if ($iduser === '' || $dateValue === null) {
             $skipped++;
             continue;
         }
 
-        $selectStmt->execute([':iduser' => $iduser, ':data' => $dataValue]);
+        $selectStmt->execute([':iduser' => $iduser, ':date' => $dateValue]);
         $existing = $selectStmt->fetch();
 
         if ($existing) {
@@ -135,7 +135,7 @@ try {
         } else {
             $insertStmt->execute([
                 ':iduser' => $iduser,
-                ':data' => $dataValue,
+                ':date' => $dateValue,
                 ':start' => $startValue,
                 ':end' => $endValue,
             ]);

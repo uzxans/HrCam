@@ -124,7 +124,7 @@ export const getLastLogForEmployee = (employeeId: string): AttendanceLog | undef
 
 export const getAttendancePairs = () => {
   const logs = getLogs().filter(log => !log.synced);
-  const users: Record<string, { iduser: string, data: string, date: string, start: string, end: string, logIds: string[] }> = {};
+  const users: Record<string, { iduser: string, date: string, start: string, end: string, logIds: string[] }> = {};
 
   logs.forEach(log => {
     const date = log.timestamp.split('T')[0];
@@ -132,8 +132,7 @@ export const getAttendancePairs = () => {
     const key = `${log.employeeId}_${date}`;
 
     if (!users[key]) {
-      // Keep both "data" and "date" for compatibility with different API handlers.
-      users[key] = { iduser: log.employeeId, data: date, date, start: '', end: '', logIds: [] };
+      users[key] = { iduser: log.employeeId, date, start: '', end: '', logIds: [] };
     }
     
     users[key].logIds.push(log.id);

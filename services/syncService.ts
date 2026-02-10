@@ -221,7 +221,7 @@ export const syncAttendanceToCloud = async (config: DbConfig): Promise<boolean> 
         db_user: config.user,
         db_pass: config.pass,
         table: config.table,
-        data: pairs.map(({ iduser, data, start, end }) => ({ iduser, data, start, end }))
+        data: pairs.map(({ iduser, date, start, end }) => ({ iduser, date, start, end }))
       })
     });
 

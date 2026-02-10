@@ -14,7 +14,7 @@ Receives hourly attendance aggregates and upserts into `time_hr`.
   "db_pass": "your_pass",
   "table": "time_hr",
   "data": [
-    { "iduser": "4178", "data": "2026-02-10", "start": "08:15:00", "end": "17:45:00" }
+    { "iduser": "4178", "date": "2026-02-10", "start": "08:15:00", "end": "17:45:00" }
   ]
 }
 ```
