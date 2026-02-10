@@ -10,7 +10,6 @@ import * as storage from '../services/storage';
 import * as faceService from '../services/faceService';
 import { syncAndSaveEmployees, DbConfig, syncAttendanceToCloud } from '../services/syncService';
 import * as tg from '../services/telegramService';
-import * as gemini from '../services/geminiService';
 
 interface AdminPanelProps {
   onBack: () => void;
@@ -188,7 +187,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     setSyncStatus('Формирование отчета...');
     try {
       const todaysLogs = storage.getTodaysLogs();
-      const reportText = await gemini.generateTelegramReport(todaysLogs);
+      if (!todaysLogs.length) {
+        setSyncStatus('За сегодня нет записей — отчет не отправлен');
+        return;
+      }
+      const reportText = tg.generateLocalReportSummary(todaysLogs);
       const result = await tg.sendTelegramReport(config.botToken, config.chatId, todaysLogs, reportText);
 
       if (result?.ok) {

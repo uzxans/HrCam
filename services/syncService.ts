@@ -62,7 +62,7 @@ const normalizeImageSource = (rawValue: string): string | null => {
 
 const unique = (values: string[]): string[] => Array.from(new Set(values.filter(Boolean)));
 
-const buildPhotoCandidates = (rawPhoto: unknown, objectId: string, empId: string): string[] => {
+const buildPhotoCandidates = (rawPhoto: unknown): string[] => {
   const candidates: string[] = [];
   const raw = typeof rawPhoto === 'string' ? rawPhoto.trim() : '';
 
@@ -151,6 +151,8 @@ export const syncAndSaveEmployees = async (
 
   const data = await response.json();
   if (!Array.isArray(data)) throw new Error('БД вернула некорректный формат или пустой список');
+  const existingEmployees = await storage.getEmployees();
+  const existingById = new Map(existingEmployees.map((emp) => [emp.id, emp]));
 
   for (let i = 0; i < data.length; i++) {
     const item = data[i];
@@ -158,8 +160,9 @@ export const syncAndSaveEmployees = async (
     const empId = item.id.toString();
     
     const objectId = config.objectId || '41';
+    const existingEmployee = existingById.get(empId);
     const preferredPhotoSource = normalizeImageSource(typeof item.photo === 'string' ? item.photo : '');
-    const photoCandidates = buildPhotoCandidates(item.photo, objectId, empId);
+    const photoCandidates = buildPhotoCandidates(item.photo);
 
     if (onProgress) onProgress(i + 1, data.length, `Обработка биометрии: ${fullName}`);
     
@@ -182,11 +185,14 @@ export const syncAndSaveEmployees = async (
       }
       
       // 3. Save to local IndexedDB
+      const finalPhoto = photoForDisplay || existingEmployee?.photoUrl || '';
+      const finalDescriptor = descriptor || existingEmployee?.descriptor;
+
       await storage.saveEmployee({
         id: empId,
         name: fullName,
-        photoUrl: photoForDisplay,
-        descriptor: descriptor || undefined,
+        photoUrl: finalPhoto,
+        descriptor: finalDescriptor || undefined,
         registeredAt: new Date().toISOString(),
         objectId: objectId,
         status: parseInt(item.status) || 100

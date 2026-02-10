@@ -5,11 +5,19 @@ import CameraScanner from './components/CameraScanner';
 import AdminPanel from './components/AdminPanel';
 import { Employee, AttendanceType, AppState } from './types';
 import * as storage from './services/storage';
-import * as gemini from './services/geminiService';
-import { syncAndSaveEmployees, syncAttendanceToCloud } from './services/syncService';
+import { syncAttendanceToCloud } from './services/syncService';
 import * as tg from './services/telegramService';
 
 const ADMIN_PASSWORD = '6411131';
+const HOURLY_REPORT_LAST_SLOT_KEY = 'faceclock_tg_last_hourly_slot';
+
+const buildHourSlot = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  const hour = `${date.getHours()}`.padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}`;
+};
 
 const App: React.FC = () => {
   const [view, setView] = useState<AppState['view']>('SCAN');
@@ -22,6 +30,7 @@ const App: React.FC = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const deniedToastTimerRef = useRef<number | null>(null);
+  const isHourlyReportSendingRef = useRef(false);
 
   // Power Management
   const [powerMode, setPowerMode] = useState<'ACTIVE' | 'DIMMED' | 'SLEEP'>('ACTIVE');
@@ -107,6 +116,34 @@ const App: React.FC = () => {
     }
   }, [handleUserActivity]);
 
+  const attemptHourlyTelegramReport = useCallback(async () => {
+    if (!navigator.onLine || isHourlyReportSendingRef.current) return;
+
+    const botToken = localStorage.getItem('tg_bot_token');
+    const chatId = localStorage.getItem('tg_chat_id');
+    if (!botToken || !chatId) return;
+
+    const logs = storage.getTodaysLogs();
+    if (!logs.length) return; // Do not send empty reports.
+
+    const slot = buildHourSlot(new Date());
+    const lastSlot = localStorage.getItem(HOURLY_REPORT_LAST_SLOT_KEY);
+    if (lastSlot === slot) return;
+
+    isHourlyReportSendingRef.current = true;
+    try {
+      const reportText = tg.generateLocalReportSummary(logs);
+      const result = await tg.sendTelegramReport(botToken, chatId, logs, reportText);
+      if (result?.ok) {
+        localStorage.setItem(HOURLY_REPORT_LAST_SLOT_KEY, slot);
+      }
+    } catch (e) {
+      // Keep silent in scanner mode; next interval will retry.
+    } finally {
+      isHourlyReportSendingRef.current = false;
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
       if (deniedToastTimerRef.current) {
@@ -114,6 +151,15 @@ const App: React.FC = () => {
       }
     };
   }, []);
+
+  useEffect(() => {
+    // Try once on startup and then once per minute.
+    void attemptHourlyTelegramReport();
+    const timer = window.setInterval(() => {
+      void attemptHourlyTelegramReport();
+    }, 60000);
+    return () => window.clearInterval(timer);
+  }, [attemptHourlyTelegramReport]);
 
   return (
     <div className="h-screen w-screen bg-black relative overflow-hidden font-sans">

@@ -1,6 +1,63 @@
 
 import { AttendanceLog } from '../types';
 
+const formatDateKey = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+export const generateLocalReportSummary = (logs: AttendanceLog[]): string => {
+  if (!logs.length) return 'За выбранный период нет записей посещаемости.';
+
+  const sorted = [...logs].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  const presentEmployees = new Set<string>();
+  const firstEntryByEmployee = new Map<string, Date>();
+  const insideState = new Map<string, boolean>();
+  let anomalies = 0;
+
+  for (const log of sorted) {
+    const ts = new Date(log.timestamp);
+    if (log.type === 'ENTRY') {
+      presentEmployees.add(log.employeeId);
+      if (!firstEntryByEmployee.has(log.employeeId)) {
+        firstEntryByEmployee.set(log.employeeId, ts);
+      }
+      insideState.set(log.employeeId, true);
+    } else {
+      if (!insideState.get(log.employeeId)) {
+        anomalies++;
+      } else {
+        insideState.set(log.employeeId, false);
+      }
+    }
+  }
+
+  for (const [, isInside] of insideState.entries()) {
+    if (isInside) anomalies++;
+  }
+
+  const lateEmployees: string[] = [];
+  for (const log of sorted) {
+    if (log.type !== 'ENTRY') continue;
+    const firstEntry = firstEntryByEmployee.get(log.employeeId);
+    if (!firstEntry) continue;
+    const isSame = firstEntry.getTime() === new Date(log.timestamp).getTime();
+    if (!isSame) continue;
+    const isLate = firstEntry.getHours() > 9 || (firstEntry.getHours() === 9 && firstEntry.getMinutes() > 0);
+    if (isLate) {
+      lateEmployees.push(log.employeeName);
+    }
+  }
+
+  const dateLabel = formatDateKey(new Date(sorted[0].timestamp));
+  const lateInfo = lateEmployees.length ? lateEmployees.join(', ') : 'нет';
+  const anomaliesInfo = anomalies > 0 ? `${anomalies}` : 'нет';
+
+  return `Дата: ${dateLabel}. Присутствовали: ${presentEmployees.size}. Опоздали: ${lateInfo}. Аномалии: ${anomaliesInfo}.`;
+};
+
 export const sendMessage = async (botToken: string, chatId: string, text: string) => {
   if (!botToken || !chatId) return null;
   try {
@@ -53,6 +110,10 @@ export const sendTelegramReport = async (
   logs: AttendanceLog[],
   reportText: string
 ) => {
+  if (!logs.length) {
+    return { ok: false, description: 'Нет данных для отчета' };
+  }
+
   try {
     const XLSX = await import('xlsx');
     const excelRows = logs.map((log) => ({
@@ -69,7 +130,7 @@ export const sendTelegramReport = async (
       ['Записей', logs.length.toString()],
       [],
       ['Комментарий'],
-      [reportText || 'Без комментария']
+      [reportText || generateLocalReportSummary(logs)]
     ]);
     const logsSheet = XLSX.utils.json_to_sheet(excelRows);
     XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
