@@ -1,15 +1,18 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, Wifi, WifiOff, CloudSync, Lock, X, BatteryCharging, Zap, CheckCircle, Globe, ShieldAlert } from 'lucide-react';
+import { Settings, Wifi, WifiOff, X, CheckCircle, Globe, ShieldAlert } from 'lucide-react';
 import CameraScanner from './components/CameraScanner';
 import AdminPanel from './components/AdminPanel';
 import { Employee, AttendanceType, AppState } from './types';
 import * as storage from './services/storage';
-import { syncAttendanceToCloud } from './services/syncService';
+import { syncAndSaveEmployees, syncAttendanceToCloud } from './services/syncService';
 import * as tg from './services/telegramService';
 
 const ADMIN_PASSWORD = '6411131';
-const HOURLY_REPORT_LAST_SLOT_KEY = 'faceclock_tg_last_hourly_slot';
+const HOURLY_SQL_SYNC_LAST_SLOT_KEY = 'faceclock_sql_last_hourly_slot';
+const AUTO_EMPLOYEE_SYNC_LAST_SLOT_KEY = 'faceclock_employee_sync_slot';
+const DIM_AFTER_MS = 30000;
+const SLEEP_AFTER_MS = 50000;
 
 const buildHourSlot = (date: Date): string => {
   const year = date.getFullYear();
@@ -17,6 +20,15 @@ const buildHourSlot = (date: Date): string => {
   const day = `${date.getDate()}`.padStart(2, '0');
   const hour = `${date.getHours()}`.padStart(2, '0');
   return `${year}-${month}-${day} ${hour}`;
+};
+
+const buildTenMinuteSlot = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  const hour = `${date.getHours()}`.padStart(2, '0');
+  const tenMinuteBlock = Math.floor(date.getMinutes() / 10);
+  return `${year}-${month}-${day} ${hour}:${tenMinuteBlock}`;
 };
 
 const App: React.FC = () => {
@@ -30,7 +42,7 @@ const App: React.FC = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const deniedToastTimerRef = useRef<number | null>(null);
-  const isHourlyReportSendingRef = useRef(false);
+  const isEmployeeSyncingRef = useRef(false);
 
   // Power Management
   const [powerMode, setPowerMode] = useState<'ACTIVE' | 'DIMMED' | 'SLEEP'>('ACTIVE');
@@ -49,17 +61,17 @@ const App: React.FC = () => {
 
   const handleUserActivity = useCallback(() => {
     setLastActivity(Date.now());
-    if (powerMode !== 'ACTIVE') setPowerMode('ACTIVE');
-  }, [powerMode]);
+    setPowerMode((prevMode) => (prevMode === 'ACTIVE' ? prevMode : 'ACTIVE'));
+  }, []);
 
-  const attemptCloudSync = useCallback(async () => {
-    if (!navigator.onLine || isCloudSyncing) return;
+  const attemptCloudSync = useCallback(async (): Promise<boolean> => {
+    if (!navigator.onLine || isCloudSyncing) return false;
     const apiUrl = localStorage.getItem('sync_api_url');
-    if (!apiUrl) return;
+    if (!apiUrl) return false;
 
     setIsCloudSyncing(true);
     try {
-      await syncAttendanceToCloud({
+      const ok = await syncAttendanceToCloud({
         apiUrl,
         host: localStorage.getItem('db_host') || '',
         name: localStorage.getItem('db_name') || '',
@@ -67,6 +79,9 @@ const App: React.FC = () => {
         pass: localStorage.getItem('db_pass') || '',
         table: 'time_hr'
       });
+      return ok;
+    } catch (e) {
+      return false;
     } finally {
       setIsCloudSyncing(false);
     }
@@ -89,11 +104,8 @@ const App: React.FC = () => {
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       type
     });
-    
-    // Background sync to cloud
-    setTimeout(attemptCloudSync, 2000);
     setTimeout(() => setLastScanMessage(null), 3000);
-  }, [handleUserActivity, attemptCloudSync]);
+  }, [handleUserActivity]);
 
   const handleDenied = useCallback(async (photo: string) => {
     handleUserActivity();
@@ -116,32 +128,76 @@ const App: React.FC = () => {
     }
   }, [handleUserActivity]);
 
-  const attemptHourlyTelegramReport = useCallback(async () => {
-    if (!navigator.onLine || isHourlyReportSendingRef.current) return;
-
-    const botToken = localStorage.getItem('tg_bot_token');
-    const chatId = localStorage.getItem('tg_chat_id');
-    if (!botToken || !chatId) return;
-
-    const logs = storage.getTodaysLogs();
-    if (!logs.length) return; // Do not send empty reports.
+  const attemptHourlySqlSync = useCallback(async () => {
+    if (!navigator.onLine || isCloudSyncing) return;
+    const pairs = storage.getAttendancePairs();
+    if (!pairs.length) return;
 
     const slot = buildHourSlot(new Date());
-    const lastSlot = localStorage.getItem(HOURLY_REPORT_LAST_SLOT_KEY);
+    const lastSlot = localStorage.getItem(HOURLY_SQL_SYNC_LAST_SLOT_KEY);
     if (lastSlot === slot) return;
 
-    isHourlyReportSendingRef.current = true;
-    try {
-      const reportText = tg.generateLocalReportSummary(logs);
-      const result = await tg.sendTelegramReport(botToken, chatId, logs, reportText);
-      if (result?.ok) {
-        localStorage.setItem(HOURLY_REPORT_LAST_SLOT_KEY, slot);
-      }
-    } catch (e) {
-      // Keep silent in scanner mode; next interval will retry.
-    } finally {
-      isHourlyReportSendingRef.current = false;
+    const ok = await attemptCloudSync();
+    if (ok) {
+      localStorage.setItem(HOURLY_SQL_SYNC_LAST_SLOT_KEY, slot);
     }
+  }, [attemptCloudSync, isCloudSyncing]);
+
+  const attemptEmployeeAutoSync = useCallback(async () => {
+    if (!navigator.onLine || isEmployeeSyncingRef.current) return;
+
+    const apiUrl = localStorage.getItem('sync_api_url');
+    if (!apiUrl) return;
+
+    const slot = buildTenMinuteSlot(new Date());
+    const lastSlot = localStorage.getItem(AUTO_EMPLOYEE_SYNC_LAST_SLOT_KEY);
+    if (lastSlot === slot) return;
+
+    isEmployeeSyncingRef.current = true;
+    try {
+      await syncAndSaveEmployees({
+        apiUrl,
+        host: localStorage.getItem('db_host') || '',
+        name: localStorage.getItem('db_name') || '',
+        user: localStorage.getItem('db_user') || '',
+        pass: localStorage.getItem('db_pass') || '',
+        table: localStorage.getItem('db_table') || 'hrapp',
+        objectId: localStorage.getItem('db_object') || '41',
+        activeStatus: localStorage.getItem('db_status') || '100',
+      });
+      localStorage.setItem(AUTO_EMPLOYEE_SYNC_LAST_SLOT_KEY, slot);
+    } catch (e) {
+      // Stay silent in scanner mode and retry next cycle.
+    } finally {
+      isEmployeeSyncingRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const idleMs = Date.now() - lastActivity;
+      if (idleMs >= SLEEP_AFTER_MS) {
+        if (powerMode !== 'SLEEP') setPowerMode('SLEEP');
+      } else if (idleMs >= DIM_AFTER_MS) {
+        if (powerMode !== 'DIMMED') setPowerMode('DIMMED');
+      } else if (powerMode !== 'ACTIVE') {
+        setPowerMode('ACTIVE');
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [lastActivity, powerMode]);
+
+  useEffect(() => {
+    const onPointer = () => handleUserActivity();
+    const onKeyDown = () => handleUserActivity();
+    window.addEventListener('pointerdown', onPointer, { passive: true });
+    window.addEventListener('touchstart', onPointer, { passive: true });
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointer);
+      window.removeEventListener('touchstart', onPointer);
+      window.removeEventListener('keydown', onKeyDown);
+    };
   }, []);
 
   useEffect(() => {
@@ -153,13 +209,15 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // Try once on startup and then once per minute.
-    void attemptHourlyTelegramReport();
+    // Try sync tasks on startup and then every minute.
+    void attemptHourlySqlSync();
+    void attemptEmployeeAutoSync();
     const timer = window.setInterval(() => {
-      void attemptHourlyTelegramReport();
+      void attemptHourlySqlSync();
+      void attemptEmployeeAutoSync();
     }, 60000);
     return () => window.clearInterval(timer);
-  }, [attemptHourlyTelegramReport]);
+  }, [attemptHourlySqlSync, attemptEmployeeAutoSync]);
 
   return (
     <div className="h-screen w-screen bg-black relative overflow-hidden font-sans">

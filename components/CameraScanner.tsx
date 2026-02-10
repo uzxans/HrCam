@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { UserCheck, ScanFace, Moon, ShieldAlert, Loader2, Zap, CameraOff } from 'lucide-react';
+import { UserCheck, ScanFace, Loader2, Zap, CameraOff } from 'lucide-react';
 import { Employee, AttendanceType } from '../types';
 import * as storage from '../services/storage';
 import * as faceService from '../services/faceService';
@@ -141,7 +141,17 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
 
     const loop = async () => {
       if (!active) return;
-      if (powerMode === 'SLEEP') { timer = setTimeout(loop, 1000); return; }
+      if (powerMode === 'SLEEP') {
+        // In sleep we run lightweight face presence checks to wake up automatically.
+        if (videoRef.current && videoRef.current.readyState === 4) {
+          const detection = await faceService.detectFace(videoRef.current);
+          if (detection) {
+            onWake();
+          }
+        }
+        timer = setTimeout(loop, 1000);
+        return;
+      }
       
       // Keep running loop but ignore results if in success state locally
       if (scanStatus === 'success' || scanStatus === 'cooldown' || scanStatus === 'duplicate' || isProcessing) { timer = setTimeout(loop, 300); return; }

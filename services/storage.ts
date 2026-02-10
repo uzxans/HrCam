@@ -7,6 +7,7 @@ const KEYS = {
   REPORTED_DAYS: 'faceclock_reported_days',
   DENIED_ATTEMPTS: 'faceclock_denied_attempts',
   TG_LAST_UPDATE_ID: 'faceclock_tg_last_id',
+  LAST_EMPLOYEE_EVENT: 'faceclock_last_employee_event',
 };
 
 const DB_NAME = 'FaceClockDB';
@@ -32,6 +33,7 @@ export const clearAppData = async (): Promise<void> => {
   localStorage.removeItem(KEYS.LAST_SYNC);
   localStorage.removeItem(KEYS.REPORTED_DAYS);
   localStorage.removeItem(KEYS.DENIED_ATTEMPTS);
+  localStorage.removeItem(KEYS.LAST_EMPLOYEE_EVENT);
   const db = await openDB();
   const transaction = db.transaction([STORE_EMPLOYEES], 'readwrite');
   transaction.objectStore(STORE_EMPLOYEES).clear();
@@ -74,6 +76,15 @@ export const getLogs = (): AttendanceLog[] => {
   return data ? JSON.parse(data) : [];
 };
 
+const getLastEmployeeEventMap = (): Record<string, AttendanceLog> => {
+  const data = localStorage.getItem(KEYS.LAST_EMPLOYEE_EVENT);
+  return data ? JSON.parse(data) : {};
+};
+
+const setLastEmployeeEventMap = (map: Record<string, AttendanceLog>) => {
+  localStorage.setItem(KEYS.LAST_EMPLOYEE_EVENT, JSON.stringify(map));
+};
+
 export const addLog = (employee: Employee, type: AttendanceType): AttendanceLog => {
   const logs = getLogs();
   const newLog: AttendanceLog = {
@@ -86,13 +97,17 @@ export const addLog = (employee: Employee, type: AttendanceType): AttendanceLog 
   };
   logs.push(newLog);
   localStorage.setItem(KEYS.LOGS, JSON.stringify(logs));
+  const map = getLastEmployeeEventMap();
+  map[newLog.employeeId] = newLog;
+  setLastEmployeeEventMap(map);
   return newLog;
 };
 
-export const markLogsAsSynced = (logIds: string[]) => {
-  const logs = getLogs();
-  const updated = logs.map(l => logIds.includes(l.id) ? { ...l, synced: true } : l);
-  localStorage.setItem(KEYS.LOGS, JSON.stringify(updated));
+export const removeLogsByIds = (logIds: string[]) => {
+  if (!logIds.length) return;
+  const idSet = new Set(logIds);
+  const remainingLogs = getLogs().filter(log => !idSet.has(log.id));
+  localStorage.setItem(KEYS.LOGS, JSON.stringify(remainingLogs));
 };
 
 export const getTodaysLogs = (): AttendanceLog[] => {
@@ -101,12 +116,15 @@ export const getTodaysLogs = (): AttendanceLog[] => {
 };
 
 export const getLastLogForEmployee = (employeeId: string): AttendanceLog | undefined => {
-  return getLogs().filter(l => l.employeeId === employeeId).pop();
+  const fromLogs = getLogs().filter(l => l.employeeId === employeeId).pop();
+  if (fromLogs) return fromLogs;
+  const snapshot = getLastEmployeeEventMap();
+  return snapshot[employeeId];
 };
 
 export const getAttendancePairs = () => {
-  const logs = getTodaysLogs();
-  const users: Record<string, { iduser: string, date: string, start: string, end: string, logIds: string[] }> = {};
+  const logs = getLogs().filter(log => !log.synced);
+  const users: Record<string, { iduser: string, data: string, date: string, start: string, end: string, logIds: string[] }> = {};
 
   logs.forEach(log => {
     const date = log.timestamp.split('T')[0];
@@ -114,7 +132,8 @@ export const getAttendancePairs = () => {
     const key = `${log.employeeId}_${date}`;
 
     if (!users[key]) {
-      users[key] = { iduser: log.employeeId, date, start: '', end: '', logIds: [] };
+      // Keep both "data" and "date" for compatibility with different API handlers.
+      users[key] = { iduser: log.employeeId, data: date, date, start: '', end: '', logIds: [] };
     }
     
     users[key].logIds.push(log.id);

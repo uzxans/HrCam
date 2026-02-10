@@ -14,61 +14,6 @@
 
     <!-- Load face-api.js globally -->
     <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-      @keyframes shake {
-        0%, 100% { transform: translateX(0); }
-        25% { transform: translateX(-8px); }
-        75% { transform: translateX(8px); }
-      }
-      .animate-shake {
-        animation: shake 0.2s ease-in-out 0s 2;
-      }
-      .custom-scrollbar::-webkit-scrollbar {
-        width: 4px;
-      }
-      .custom-scrollbar::-webkit-scrollbar-track {
-        background: transparent;
-      }
-      .custom-scrollbar::-webkit-scrollbar-thumb {
-        background: rgba(255, 255, 255, 0.1);
-        border-radius: 10px;
-      }
-      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-        background: rgba(255, 255, 255, 0.2);
-      }
-    </style>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              gray: {
-                900: '#111827',
-                800: '#1f2937',
-                700: '#374151',
-              },
-              emerald: {
-                500: '#10b981',
-                600: '#059669',
-              }
-            },
-            animation: {
-              'scan': 'scan 2s linear infinite',
-              'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-            },
-            keyframes: {
-              scan: {
-                '0%': { top: '0%' },
-                '50%': { top: '100%' },
-                '100%': { top: '0%' },
-              }
-            }
-          },
-        },
-      }
-    </script>
 </head>
   <body class="bg-gray-900 text-white overflow-hidden select-none touch-none">
     <div id="root"></div>

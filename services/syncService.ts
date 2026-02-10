@@ -220,13 +220,17 @@ export const syncAttendanceToCloud = async (config: DbConfig): Promise<boolean> 
         db_name: config.name,
         db_user: config.user,
         db_pass: config.pass,
-        data: pairs // [{ iduser, date, start, end }]
+        table: config.table,
+        data: pairs.map(({ iduser, data, start, end }) => ({ iduser, data, start, end }))
       })
     });
 
     if (response.ok) {
+      const payload = await response.json().catch(() => null);
+      if (payload?.ok === false) return false;
       const allLogIds = pairs.flatMap(p => p.logIds);
-      storage.markLogsAsSynced(allLogIds);
+      storage.removeLogsByIds(allLogIds);
+      storage.setLastSync();
       return true;
     }
   } catch (e) {
