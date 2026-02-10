@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   ArrowLeft, RefreshCw, Save, User, Loader2, Settings2, FolderOpen, 
   Users, CheckCircle2, Database, MessageSquare, SendHorizontal, 
@@ -32,25 +32,50 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     user: localStorage.getItem('db_user') || '',
     pass: localStorage.getItem('db_pass') || '',
     table: localStorage.getItem('db_table') || 'hrapp',
-    objectId: localStorage.getItem('db_object') || '41',
+    objectId: localStorage.getItem('db_object') || localStorage.getItem('db_objectId') || '41',
     status: localStorage.getItem('db_status') || '100',
     apiUrl: localStorage.getItem('sync_api_url') || '',
+    syncTimeHr: localStorage.getItem('sync_time_hr') || '',
     botToken: localStorage.getItem('tg_bot_token') || '',
     chatId: localStorage.getItem('tg_chat_id') || ''
   });
 
-  useEffect(() => { refreshData(); }, []);
-
-  const refreshData = async () => {
-    setEmployees(await storage.getEmployees()); 
+  const refreshData = useCallback(async () => {
+    const activeStatus = Number(config.status || '100');
+    const allEmployees = await storage.getEmployees();
+    setEmployees(allEmployees.filter((emp) => Number(emp.status ?? activeStatus) === activeStatus));
     setLogs(storage.getTodaysLogs().reverse());
+  }, [config.status]);
+
+  useEffect(() => {
+    void refreshData();
+  }, [refreshData]);
+
+  useEffect(() => {
+    const handleEmployeesUpdated = () => {
+      void refreshData();
+    };
+    window.addEventListener('faceclock:employees-updated', handleEmployeesUpdated);
+    return () => {
+      window.removeEventListener('faceclock:employees-updated', handleEmployeesUpdated);
+    };
+  }, [refreshData]);
+
+  const getConfigStorageKey = (key: string): string => {
+    if (key === 'apiUrl') return 'sync_api_url';
+    if (key === 'syncTimeHr') return 'sync_time_hr';
+    if (key === 'botToken') return 'tg_bot_token';
+    if (key === 'chatId') return 'tg_chat_id';
+    if (key === 'objectId') return 'db_object';
+    return `db_${key}`;
   };
 
   const handleSave = () => {
     Object.entries(config).forEach(([k, v]) => {
-      const storageKey = k === 'apiUrl' ? 'sync_api_url' : k === 'botToken' ? 'tg_bot_token' : k === 'chatId' ? 'tg_chat_id' : `db_${k}`;
+      const storageKey = getConfigStorageKey(k);
       localStorage.setItem(storageKey, v);
     });
+    localStorage.removeItem('db_objectId');
     setSyncStatus('Настройки сохранены');
     setTimeout(() => setSyncStatus(null), 2000);
   };
@@ -97,6 +122,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     else if (lowerKey === 'db_user' || lowerKey === 'user') cfg.user = val;
     else if (lowerKey === 'db_pass' || lowerKey === 'pass') cfg.pass = val;
     else if (lowerKey === 'api_url' || lowerKey === 'apiurl') cfg.apiUrl = val;
+    else if (lowerKey === 'sync_time_hr' || lowerKey === 'synctimehr') cfg.syncTimeHr = val;
+    else if (lowerKey === 'db_object' || lowerKey === 'object' || lowerKey === 'objectid' || lowerKey === 'object_id') cfg.objectId = val;
+    else if (lowerKey === 'db_status' || lowerKey === 'status') cfg.status = val;
     else if (lowerKey === 'bot_token' || lowerKey === 'bottoken') cfg.botToken = val;
     else if (lowerKey === 'chat_id' || lowerKey === 'chatid') cfg.chatId = val;
     else if (key in cfg) (cfg as any)[key] = val;
@@ -165,7 +193,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const manualCloudSync = async () => {
     setIsSyncing(true);
     try {
-      const ok = await syncAttendanceToCloud({ ...config, table: 'time_hr' });
+      const ok = await syncAttendanceToCloud({
+        ...config,
+        table: 'time_hr',
+        syncTimeHrUrl: config.syncTimeHr || config.apiUrl,
+      });
       if (ok) {
         setSyncStatus('SQL Синхронизация: OK');
         refreshData();

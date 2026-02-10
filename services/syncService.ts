@@ -10,6 +10,7 @@ export interface DbConfig {
   pass: string;
   table: string;
   apiUrl: string;
+  syncTimeHrUrl?: string;
   objectId?: string;
   activeStatus?: string;
 }
@@ -153,9 +154,9 @@ export const syncAndSaveEmployees = async (
   const data = await response.json();
   if (!Array.isArray(data)) throw new Error('БД вернула некорректный формат или пустой список');
   const existingEmployees = await storage.getEmployees();
-  const existingById = new Map(existingEmployees.map((emp) => [emp.id, emp]));
+  const existingById = new Map(existingEmployees.map((emp) => [String(emp.id).trim(), emp]));
   const remoteEmployeeIds = new Set<string>();
-  const objectId = config.objectId || '41';
+  const objectId = String(config.objectId || '41').trim();
 
   for (let i = 0; i < data.length; i++) {
     const item = data[i];
@@ -165,7 +166,7 @@ export const syncAndSaveEmployees = async (
     }
 
     const fullName = item.full_name || item.name || 'Без имени';
-    const empId = item.id.toString();
+    const empId = String(item.id).trim();
     remoteEmployeeIds.add(empId);
     const existingEmployee = existingById.get(empId);
     const preferredPhotoSource = normalizeImageSource(typeof item.photo === 'string' ? item.photo : '');
@@ -215,8 +216,10 @@ export const syncAndSaveEmployees = async (
   // Safety: skip mass cleanup when remote returned an empty list.
   if (remoteEmployeeIds.size > 0) {
     const staleEmployees = existingEmployees.filter((emp) => {
-      const sameObject = !emp.objectId || emp.objectId === objectId;
-      return sameObject && !remoteEmployeeIds.has(emp.id);
+      const empObjectId = emp.objectId ? String(emp.objectId).trim() : '';
+      const sameObject = !empObjectId || empObjectId === objectId;
+      const localEmpId = String(emp.id).trim();
+      return sameObject && !remoteEmployeeIds.has(localEmpId);
     });
 
     if (staleEmployees.length) {
@@ -226,7 +229,9 @@ export const syncAndSaveEmployees = async (
   }
 
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('faceclock:employees-updated'));
+    window.dispatchEvent(new CustomEvent('faceclock:employees-updated', {
+      detail: { updated: count, removed, at: Date.now() }
+    }));
   }
 
   return { count, errors, removed };
@@ -238,20 +243,25 @@ export const syncAttendanceToCloud = async (
 ): Promise<boolean> => {
   const pairs = storage.getAttendancePairs(options.maxPairs);
   if (pairs.length === 0) return true;
+  const targetUrl = (config.syncTimeHrUrl || config.apiUrl || '').trim();
+  if (!targetUrl) return false;
+  const shouldSendAction = !config.syncTimeHrUrl || config.syncTimeHrUrl.trim() === config.apiUrl.trim();
 
   try {
-    const response = await fetchWithTimeout(config.apiUrl, {
+    const payload: Record<string, unknown> = {
+      db_host: config.host,
+      db_name: config.name,
+      db_user: config.user,
+      db_pass: config.pass,
+      table: config.table,
+      data: pairs.map(({ iduser, date, start, end }) => ({ iduser, date, start, end }))
+    };
+    if (shouldSendAction) payload.action = 'sync_time_hr';
+
+    const response = await fetchWithTimeout(targetUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'sync_time_hr',
-        db_host: config.host,
-        db_name: config.name,
-        db_user: config.user,
-        db_pass: config.pass,
-        table: config.table,
-        data: pairs.map(({ iduser, date, start, end }) => ({ iduser, date, start, end }))
-      })
+      body: JSON.stringify(payload)
     });
 
     if (response.ok) {

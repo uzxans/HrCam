@@ -12,6 +12,7 @@ const ADMIN_PASSWORD = '6411131';
 const HOURLY_SQL_SYNC_LAST_SLOT_KEY = 'faceclock_sql_last_hourly_slot';
 const HYBRID_SQL_SYNC_LAST_TS_KEY = 'faceclock_sql_last_hybrid_ts';
 const AUTO_EMPLOYEE_SYNC_LAST_TS_KEY = 'faceclock_employee_sync_ts';
+const EMPLOYEE_SYNC_INDICATOR_KEY = 'faceclock_employee_sync_indicator';
 const DIM_AFTER_MS = 30000;
 const SLEEP_AFTER_MS = 50000;
 const HYBRID_SQL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -34,6 +35,30 @@ const isIntervalDue = (storageKey: string, intervalMs: number): boolean => {
   return Date.now() - lastTs >= intervalMs;
 };
 
+type EmployeeSyncIndicator = {
+  time: string;
+  updated: number;
+  removed: number;
+};
+
+const readEmployeeSyncIndicator = (): EmployeeSyncIndicator | null => {
+  try {
+    const raw = localStorage.getItem(EMPLOYEE_SYNC_INDICATOR_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed?.time === 'string' &&
+      typeof parsed?.updated === 'number' &&
+      typeof parsed?.removed === 'number'
+    ) {
+      return parsed as EmployeeSyncIndicator;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+};
+
 const App: React.FC = () => {
   const [view, setView] = useState<AppState['view']>('SCAN');
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -42,6 +67,7 @@ const App: React.FC = () => {
   
   const [lastScanMessage, setLastScanMessage] = useState<{name: string, time: string, type: AttendanceType} | null>(null);
   const [lastDeniedMessage, setLastDeniedMessage] = useState<{ time: string } | null>(null);
+  const [employeeSyncIndicator, setEmployeeSyncIndicator] = useState<EmployeeSyncIndicator | null>(() => readEmployeeSyncIndicator());
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const deniedToastTimerRef = useRef<number | null>(null);
@@ -68,16 +94,28 @@ const App: React.FC = () => {
     setPowerMode((prevMode) => (prevMode === 'ACTIVE' ? prevMode : 'ACTIVE'));
   }, []);
 
+  const storeEmployeeSyncIndicator = useCallback((updated: number, removed: number, at = Date.now()) => {
+    const indicator: EmployeeSyncIndicator = {
+      time: new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      updated,
+      removed,
+    };
+    setEmployeeSyncIndicator(indicator);
+    localStorage.setItem(EMPLOYEE_SYNC_INDICATOR_KEY, JSON.stringify(indicator));
+  }, []);
+
   const attemptCloudSync = useCallback(async (maxPairs?: number): Promise<boolean> => {
     if (!navigator.onLine || isCloudSyncingRef.current) return false;
-    const apiUrl = localStorage.getItem('sync_api_url');
-    if (!apiUrl) return false;
+    const apiUrl = localStorage.getItem('sync_api_url') || '';
+    const syncTimeHrUrl = localStorage.getItem('sync_time_hr') || apiUrl;
+    if (!syncTimeHrUrl) return false;
 
     isCloudSyncingRef.current = true;
     setIsCloudSyncing(true);
     try {
       const ok = await syncAttendanceToCloud({
-        apiUrl,
+        apiUrl: apiUrl || syncTimeHrUrl,
+        syncTimeHrUrl,
         host: localStorage.getItem('db_host') || '',
         name: localStorage.getItem('db_name') || '',
         user: localStorage.getItem('db_user') || '',
@@ -171,23 +209,24 @@ const App: React.FC = () => {
 
     isEmployeeSyncingRef.current = true;
     try {
-      await syncAndSaveEmployees({
+      const result = await syncAndSaveEmployees({
         apiUrl,
         host: localStorage.getItem('db_host') || '',
         name: localStorage.getItem('db_name') || '',
         user: localStorage.getItem('db_user') || '',
         pass: localStorage.getItem('db_pass') || '',
         table: localStorage.getItem('db_table') || 'hrapp',
-        objectId: localStorage.getItem('db_object') || '41',
+        objectId: localStorage.getItem('db_object') || localStorage.getItem('db_objectId') || '41',
         activeStatus: localStorage.getItem('db_status') || '100',
       });
+      storeEmployeeSyncIndicator(result.count, result.removed);
       localStorage.setItem(AUTO_EMPLOYEE_SYNC_LAST_TS_KEY, Date.now().toString());
     } catch (e) {
       // Stay silent in scanner mode and retry next cycle.
     } finally {
       isEmployeeSyncingRef.current = false;
     }
-  }, []);
+  }, [storeEmployeeSyncIndicator]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -257,6 +296,19 @@ const App: React.FC = () => {
     };
   }, [attemptHybridSqlSync, attemptEmployeeAutoSync]);
 
+  useEffect(() => {
+    const handleEmployeesUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ updated?: number; removed?: number; at?: number }>).detail;
+      if (typeof detail?.updated === 'number' && typeof detail?.removed === 'number') {
+        storeEmployeeSyncIndicator(detail.updated, detail.removed, detail.at || Date.now());
+      }
+    };
+    window.addEventListener('faceclock:employees-updated', handleEmployeesUpdated as EventListener);
+    return () => {
+      window.removeEventListener('faceclock:employees-updated', handleEmployeesUpdated as EventListener);
+    };
+  }, [storeEmployeeSyncIndicator]);
+
   return (
     <div className="h-screen w-screen bg-black relative overflow-hidden font-sans">
       {view === 'SCAN' && (
@@ -279,6 +331,13 @@ const App: React.FC = () => {
                 <div className="flex items-center space-x-2 px-4 py-2 rounded-full backdrop-blur-xl border bg-blue-500/10 text-blue-400 border-blue-500/20 animate-pulse">
                   <Globe size={14} className="animate-spin" />
                   <span className="text-[10px] font-black tracking-widest uppercase">SQL SYNC</span>
+                </div>
+              )}
+              {employeeSyncIndicator && (
+                <div className="px-4 py-2 rounded-2xl backdrop-blur-xl border bg-white/10 text-white border-white/10 max-w-sm">
+                  <p className="text-[9px] font-black uppercase tracking-widest">
+                    Сотрудники синхронизированы: {employeeSyncIndicator.time}, обновлено {employeeSyncIndicator.updated}, удалено {employeeSyncIndicator.removed}
+                  </p>
                 </div>
               )}
             </div>
