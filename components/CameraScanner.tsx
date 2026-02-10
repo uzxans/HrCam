@@ -25,6 +25,37 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   
   const lastScannedIdRef = useRef<string | null>(null);
   const lastScanTimeRef = useRef<number>(0);
+  const lastDeniedTimeRef = useRef<number>(0);
+
+  const backfillDescriptorsFromPhotos = useCallback(async (employees: Employee[]) => {
+    if (!employees.length) return;
+
+    const updatedEmployees = [...employees];
+    let matcherUpdated = false;
+
+    for (let i = 0; i < updatedEmployees.length; i++) {
+      const emp = updatedEmployees[i];
+      if ((emp.descriptor && emp.descriptor.length > 0) || !emp.photoUrl) continue;
+
+      try {
+        const descriptor = await faceService.computeFaceDescriptor(emp.photoUrl);
+        if (!descriptor || descriptor.length === 0) continue;
+
+        updatedEmployees[i] = { ...emp, descriptor };
+        matcherUpdated = true;
+        employeesRef.current = updatedEmployees;
+        faceService.initializeMatcher(updatedEmployees);
+        void storage.updateEmployee(emp.id, { descriptor });
+      } catch (e) {
+        continue;
+      }
+    }
+
+    if (matcherUpdated) {
+      employeesRef.current = updatedEmployees;
+      faceService.initializeMatcher(updatedEmployees);
+    }
+  }, []);
 
   const initSystem = useCallback(async () => {
     try {
@@ -34,11 +65,12 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
       employeesRef.current = data;
       faceService.initializeMatcher(data);
       setScanStatus('searching');
+      void backfillDescriptorsFromPhotos(data);
     } catch (e) {
       setScanStatus('error');
       onError("Ошибка AI моделей");
     }
-  }, [onError]);
+  }, [onError, backfillDescriptorsFromPhotos]);
 
   useEffect(() => {
     initSystem();
@@ -129,10 +161,10 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
           }
         } else {
             const now = Date.now();
-            if (now - lastScanTimeRef.current > 30000) {
+            if (now - lastDeniedTimeRef.current > 8000) {
                  const detection = await faceService.detectFace(videoRef.current);
                  if (detection) {
-                     lastScanTimeRef.current = now;
+                     lastDeniedTimeRef.current = now;
                      const canvas = document.createElement('canvas');
                      canvas.width = videoRef.current.videoWidth;
                      canvas.height = videoRef.current.videoHeight;

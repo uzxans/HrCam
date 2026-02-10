@@ -92,7 +92,7 @@ export const sendDeniedPhoto = async (
   const formData = new FormData();
   formData.append('chat_id', chatId);
   const timeStr = new Date(timestamp).toLocaleString('ru-RU');
-  formData.append('caption', `🚫 ДОСТУП ЗАПРЕЩЕН\n👤 Неизвестное лицо\n⏰ Время: ${timeStr}`);
+  formData.append('caption', `🚫 ДОСТУП ЗАПРЕЩЕН\n👤 Сотрудник не найден в базе\n⏰ Время: ${timeStr}`);
   formData.append('photo', blob, 'denied.jpg');
 
   try {

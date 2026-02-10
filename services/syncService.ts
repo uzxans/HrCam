@@ -27,29 +27,109 @@ const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout 
   }
 };
 
-const fetchImageAsBase64 = async (url: string): Promise<string | null> => {
-  if (!url || url.length < 10) return null;
-  // Using multiple proxies to ensure we can bypass CORS and fetch the image
+const SYSTEM_FACE_BASE_URL = 'https://systemreg.ru/skudSystems/face';
+const SYSTEM_ROOT_URL = 'https://systemreg.ru';
+
+const isHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value);
+const isDataUrl = (value: string): boolean => /^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(value);
+
+const normalizeImageSource = (rawValue: string): string | null => {
+  const value = rawValue.trim();
+  if (!value) return null;
+
+  if (isDataUrl(value)) return value;
+  // Some backends return plain base64 without data URL prefix.
+  if (/^[A-Za-z0-9+/=\s]+$/.test(value) && value.length > 256) {
+    return `data:image/jpeg;base64,${value.replace(/\s/g, '')}`;
+  }
+
+  if (value.startsWith('//')) return `https:${value}`;
+  if (isHttpUrl(value)) return value;
+
+  const normalizedPath = value.replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '');
+  if (!normalizedPath) return null;
+
+  if (/^skudsystems\/face\//i.test(normalizedPath)) {
+    return `${SYSTEM_ROOT_URL}/${normalizedPath}`;
+  }
+
+  if (/^uploads\//i.test(normalizedPath)) {
+    return `${SYSTEM_FACE_BASE_URL}/${normalizedPath}`;
+  }
+
+  return `${SYSTEM_ROOT_URL}/${normalizedPath}`;
+};
+
+const unique = (values: string[]): string[] => Array.from(new Set(values.filter(Boolean)));
+
+const buildPhotoCandidates = (rawPhoto: unknown, objectId: string, empId: string): string[] => {
+  const candidates: string[] = [];
+  const raw = typeof rawPhoto === 'string' ? rawPhoto.trim() : '';
+
+  if (raw) {
+    const normalized = normalizeImageSource(raw);
+    if (normalized) {
+      candidates.push(normalized);
+    }
+
+    if (!isDataUrl(raw) && !isHttpUrl(raw)) {
+      const path = raw.replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '');
+      if (path) {
+        candidates.push(`${SYSTEM_FACE_BASE_URL}/${path}`);
+        candidates.push(`${SYSTEM_ROOT_URL}/${path}`);
+        if (/^[^/]+\.(jpg|jpeg|png|webp)$/i.test(path)) {
+          candidates.push(`${SYSTEM_FACE_BASE_URL}/uploads/${objectId}/${path}`);
+        }
+      }
+    }
+  }
+
+  const fallback = `${SYSTEM_FACE_BASE_URL}/uploads/${objectId}/${empId}`;
+  candidates.push(`${fallback}.jpg`, `${fallback}.jpeg`, `${fallback}.png`);
+
+  return unique(candidates);
+};
+
+const fetchImageAsBase64 = async (source: string): Promise<string | null> => {
+  if (!source || source.length < 8) return null;
+  if (isDataUrl(source)) return source;
+  if (!isHttpUrl(source)) return null;
+
+  // Using multiple proxies to bypass CORS when downloading staff photos.
   const proxies = [
-    `https://wsrv.nl/?url=${encodeURIComponent(url)}&output=jpg&w=400&q=80`,
-    `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    url
+    `https://wsrv.nl/?url=${encodeURIComponent(source)}&output=jpg&w=640&q=85`,
+    `https://corsproxy.io/?${encodeURIComponent(source)}`,
+    source
   ];
 
-  for (const p of proxies) {
+  for (const proxyUrl of proxies) {
     try {
-      const res = await fetchWithTimeout(p, { method: 'GET' }, 8000);
-      if (res.ok) {
-        const blob = await res.blob();
-        return new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(blob);
-        });
-      }
-    } catch (e) { continue; }
+      const res = await fetchWithTimeout(proxyUrl, { method: 'GET' }, 8000);
+      if (!res.ok) continue;
+
+      const blob = await res.blob();
+      if (!blob || blob.size === 0) continue;
+
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve((reader.result as string) || '');
+        reader.readAsDataURL(blob);
+      });
+
+      if (base64) return base64;
+    } catch (e) {
+      continue;
+    }
   }
   return null;
+};
+
+const pickPhotoForDisplay = (candidates: string[], downloadedBase64: string | null): string => {
+  if (downloadedBase64) return downloadedBase64;
+  for (const source of candidates) {
+    if (isDataUrl(source) || isHttpUrl(source)) return source;
+  }
+  return '';
 };
 
 export const syncAndSaveEmployees = async (
@@ -76,6 +156,7 @@ export const syncAndSaveEmployees = async (
       fields: ['id', 'full_name', 'photo', 'status']
     })
   });
+  if (!response.ok) throw new Error(`Ошибка API: ${response.status} ${response.statusText}`);
 
   const data = await response.json();
   if (!Array.isArray(data)) throw new Error('БД вернула некорректный формат или пустой список');
@@ -85,27 +166,34 @@ export const syncAndSaveEmployees = async (
     const fullName = item.full_name || item.name || 'Без имени';
     const empId = item.id.toString();
     
-    // Use the specific path provided by the user: uploads/{objectId}/{id}.jpg
     const objectId = config.objectId || '41';
-    const photoUrl = `https://systemreg.ru/skudSystems/face/uploads/${objectId}/${empId}.jpg`;
+    const photoCandidates = buildPhotoCandidates(item.photo, objectId, empId);
 
     if (onProgress) onProgress(i + 1, data.length, `Обработка биометрии: ${fullName}`);
     
     try {
-      // 1. Download image
-      const base64 = await fetchImageAsBase64(photoUrl);
+      // 1. Download image (or reuse existing base64 from the API response)
+      let base64: string | null = null;
+      for (const source of photoCandidates) {
+        base64 = await fetchImageAsBase64(source);
+        if (base64) break;
+      }
+      const photoForDisplay = pickPhotoForDisplay(photoCandidates, base64);
       
       // 2. Extract Face Embeddings (Descriptor) using face-api.js
       let descriptor = null;
       if (base64) {
         descriptor = await faceService.computeFaceDescriptor(base64);
+      } else if (photoForDisplay) {
+        // Fallback: if we couldn't download image but URL is directly accessible in browser.
+        descriptor = await faceService.computeFaceDescriptor(photoForDisplay);
       }
       
       // 3. Save to local IndexedDB
       await storage.saveEmployee({
         id: empId,
         name: fullName,
-        photoUrl: base64 || '',
+        photoUrl: photoForDisplay,
         descriptor: descriptor || undefined,
         registeredAt: new Date().toISOString(),
         objectId: objectId,

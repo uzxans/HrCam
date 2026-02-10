@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, Wifi, WifiOff, CloudSync, Lock, X, BatteryCharging, Zap, CheckCircle, Globe } from 'lucide-react';
+import { Settings, Wifi, WifiOff, CloudSync, Lock, X, BatteryCharging, Zap, CheckCircle, Globe, ShieldAlert } from 'lucide-react';
 import CameraScanner from './components/CameraScanner';
 import AdminPanel from './components/AdminPanel';
 import { Employee, AttendanceType, AppState } from './types';
@@ -18,8 +18,10 @@ const App: React.FC = () => {
   const [passwordError, setPasswordError] = useState(false);
   
   const [lastScanMessage, setLastScanMessage] = useState<{name: string, time: string, type: AttendanceType} | null>(null);
+  const [lastDeniedMessage, setLastDeniedMessage] = useState<{ time: string } | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const deniedToastTimerRef = useRef<number | null>(null);
 
   // Power Management
   const [powerMode, setPowerMode] = useState<'ACTIVE' | 'DIMMED' | 'SLEEP'>('ACTIVE');
@@ -63,6 +65,7 @@ const App: React.FC = () => {
 
   const handleScanComplete = useCallback((employee: Employee, type: AttendanceType) => {
     handleUserActivity();
+    setLastDeniedMessage(null);
     
     // 1-minute duplicate check
     const lastLog = storage.getLastLogForEmployee(employee.id);
@@ -84,12 +87,32 @@ const App: React.FC = () => {
   }, [handleUserActivity, attemptCloudSync]);
 
   const handleDenied = useCallback(async (photo: string) => {
+    handleUserActivity();
     storage.addDeniedAttempt(photo);
+    setLastScanMessage(null);
+
+    const timestamp = new Date().toISOString();
+    setLastDeniedMessage({
+      time: new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    });
+    if (deniedToastTimerRef.current) {
+      window.clearTimeout(deniedToastTimerRef.current);
+    }
+    deniedToastTimerRef.current = window.setTimeout(() => setLastDeniedMessage(null), 3000);
+
     const botToken = localStorage.getItem('tg_bot_token');
     const chatId = localStorage.getItem('tg_chat_id');
     if (botToken && chatId) {
-      await tg.sendDeniedPhoto(botToken, chatId, photo.split(',')[1] || photo, new Date().toISOString());
+      await tg.sendDeniedPhoto(botToken, chatId, photo.split(',')[1] || photo, timestamp);
     }
+  }, [handleUserActivity]);
+
+  useEffect(() => {
+    return () => {
+      if (deniedToastTimerRef.current) {
+        window.clearTimeout(deniedToastTimerRef.current);
+      }
+    };
   }, []);
 
   return (
@@ -134,6 +157,18 @@ const App: React.FC = () => {
                     <p className="text-sm font-black uppercase tracking-tight leading-none mt-0.5">{lastScanMessage.name}</p>
                  </div>
                </div>
+            </div>
+          )}
+
+          {lastDeniedMessage && (
+            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-top-4 duration-300">
+              <div className="bg-red-500 text-white px-8 py-4 rounded-[2rem] shadow-[0_20px_50px_rgba(239,68,68,0.4)] flex items-center gap-4 border border-white/20">
+                <div className="bg-white/20 p-2 rounded-full"><ShieldAlert size={20} /></div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest opacity-90">Доступ запрещен</p>
+                  <p className="text-sm font-black uppercase tracking-tight leading-none mt-0.5">Сотрудник не найден</p>
+                </div>
+              </div>
             </div>
           )}
 
