@@ -25,6 +25,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const [progress, setProgress] = useState<{current: number, total: number, message: string} | null>(null);
   
   const configFileInputRef = useRef<HTMLInputElement>(null);
+  const lastProgressUpdateRef = useRef(0);
 
   const [config, setConfig] = useState({
     host: localStorage.getItem('db_host') || '',
@@ -119,7 +120,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         apiUrl: config.apiUrl,
         objectId: config.objectId,
         activeStatus: config.status
-      }, (curr, tot, msg) => setProgress({ current: curr, total: tot, message: msg }));
+      }, (curr, tot, msg) => {
+        const now = Date.now();
+        if (curr === tot || now - lastProgressUpdateRef.current > 180) {
+          lastProgressUpdateRef.current = now;
+          setProgress({ current: curr, total: tot, message: msg });
+        }
+      });
       
       await refreshData();
       setSyncStatus(`Готово: ${result.count} чел.`);
@@ -199,48 +206,48 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
 
   return (
     <div className="flex flex-col h-full bg-[#030303] text-gray-100 overflow-hidden font-sans">
-      <div className="p-8 bg-black/40 border-b border-white/5 flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <button onClick={onBack} className="p-4 bg-white/5 rounded-3xl border border-white/10 hover:bg-white/10 transition-all"><ArrowLeft size={24} /></button>
+      <div className="p-4 md:p-8 bg-black/40 border-b border-white/5 flex flex-col gap-4 md:gap-0 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-3 md:gap-6">
+          <button onClick={onBack} className="p-3 md:p-4 bg-white/5 rounded-3xl border border-white/10 hover:bg-white/10 transition-all"><ArrowLeft size={20} className="md:w-6 md:h-6" /></button>
           <div>
-            <h1 className="text-2xl font-black uppercase tracking-tight flex items-center gap-3"><Settings2 className="text-emerald-500" /> Админ-центр</h1>
+            <h1 className="text-lg md:text-2xl font-black uppercase tracking-tight flex items-center gap-2 md:gap-3"><Settings2 className="text-emerald-500 w-5 h-5 md:w-6 md:h-6" /> Админ-центр</h1>
             {syncStatus && <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest mt-1 animate-pulse">{syncStatus}</p>}
           </div>
         </div>
-        <div className="flex gap-4">
-          <button onClick={manualCloudSync} className="px-6 py-4 bg-blue-600/10 text-blue-400 border border-blue-500/20 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-600/20 transition-all">
+        <div className="flex flex-wrap gap-2 md:gap-4">
+          <button onClick={manualCloudSync} className="px-4 md:px-6 py-3 md:py-4 bg-blue-600/10 text-blue-400 border border-blue-500/20 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-600/20 transition-all">
             <Globe size={16} /> Выгрузить в SQL
           </button>
-          <button onClick={handleSave} className="px-8 py-4 bg-emerald-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 transition-all">
+          <button onClick={handleSave} className="px-5 md:px-8 py-3 md:py-4 bg-emerald-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 transition-all">
             <Save size={16} /> Сохранить
           </button>
         </div>
       </div>
 
-      <div className="flex px-8 mt-8 gap-3 overflow-x-auto pb-4 custom-scrollbar">
+      <div className="flex px-4 md:px-8 mt-4 md:mt-8 gap-2 md:gap-3 overflow-x-auto pb-4 custom-scrollbar">
         {[
           { id: 'EMPLOYEES', label: 'Персонал', icon: Users },
           { id: 'REPORT', label: 'Логи / SQL', icon: CheckCircle2 },
           { id: 'TELEGRAM', label: 'Telegram', icon: MessageSquare },
           { id: 'CONFIG', label: 'Сервер', icon: Database }
         ].map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex items-center gap-3 px-8 py-4 rounded-3xl text-[10px] font-black uppercase tracking-widest transition-all border ${activeTab === tab.id ? 'bg-white text-black border-white' : 'bg-white/5 text-gray-400 border-white/5 hover:bg-white/10'}`}>
+          <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex items-center gap-2 md:gap-3 px-5 md:px-8 py-3 md:py-4 rounded-3xl text-[10px] font-black uppercase tracking-widest transition-all border whitespace-nowrap ${activeTab === tab.id ? 'bg-white text-black border-white' : 'bg-white/5 text-gray-400 border-white/5 hover:bg-white/10'}`}>
             <tab.icon size={14} /> {tab.label}
           </button>
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-8 space-y-12 pb-40 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto px-4 md:px-8 pb-24 md:pb-40 custom-scrollbar">
         {activeTab === 'REPORT' && (
-          <div className="space-y-6 animate-in slide-in-from-bottom-4">
+          <div className="space-y-4 md:space-y-6 animate-in slide-in-from-bottom-4">
             <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest px-4">Журнал посещений</h3>
-            <div className="bg-white/5 rounded-[2.5rem] border border-white/5 overflow-hidden shadow-2xl">
+            <div className="bg-white/5 rounded-[1.8rem] md:rounded-[2.5rem] border border-white/5 overflow-hidden shadow-2xl">
               {logs.map(log => (
-                <div key={log.id} className="p-6 border-b border-white/5 last:border-0 flex items-center justify-between hover:bg-white/[0.02]">
-                  <div className="flex items-center gap-5">
+                <div key={log.id} className="p-4 md:p-6 border-b border-white/5 last:border-0 flex items-center justify-between hover:bg-white/[0.02]">
+                  <div className="flex items-center gap-3 md:gap-5">
                     <div className={`w-3 h-3 rounded-full ${log.type === AttendanceType.ENTRY ? 'bg-emerald-500' : 'bg-orange-500'}`} />
                     <div>
-                      <p className="text-sm font-black uppercase text-white">{log.employeeName}</p>
+                      <p className="text-xs md:text-sm font-black uppercase text-white">{log.employeeName}</p>
                       <p className="text-[10px] text-gray-500 font-mono mt-1 uppercase">{new Date(log.timestamp).toLocaleTimeString()} — {log.type === AttendanceType.ENTRY ? 'Пришел' : 'Ушел'}</p>
                     </div>
                   </div>
@@ -253,9 +260,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         )}
 
         {activeTab === 'EMPLOYEES' && (
-          <div className="space-y-8 animate-in slide-in-from-bottom-4">
+          <div className="space-y-6 md:space-y-8 animate-in slide-in-from-bottom-4">
             <div className="flex justify-between items-center px-4">
-              <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest">Персонал ({employees.length})</h3>
+              <h3 className="text-[10px] md:text-xs font-black text-gray-500 uppercase tracking-widest">Персонал ({employees.length})</h3>
               <button 
                 onClick={handleSyncEmployees}
                 disabled={isSyncing}
@@ -266,7 +273,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             </div>
             
             {progress && (
-              <div className="px-4 py-6 bg-white/5 rounded-3xl border border-white/10">
+              <div className="px-4 py-5 bg-white/5 rounded-3xl border border-white/10">
                 <p className="text-[10px] font-black uppercase text-emerald-400 mb-3">{progress.message}</p>
                 <div className="w-full bg-black h-2 rounded-full overflow-hidden">
                   <div className="bg-emerald-500 h-full transition-all duration-300" style={{ width: `${(progress.current / progress.total) * 100}%` }} />
@@ -274,9 +281,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
               </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6">
               {employees.map(emp => (
-                <div key={emp.id} className="bg-white/5 p-6 rounded-[2.5rem] border border-white/5 flex flex-col items-center group shadow-xl transition-all">
+                <div key={emp.id} className="bg-white/5 p-4 md:p-6 rounded-[2rem] md:rounded-[2.5rem] border border-white/5 flex flex-col items-center group shadow-xl transition-all">
                   <div className="w-24 h-24 rounded-[2rem] bg-black border border-white/10 overflow-hidden mb-5 relative">
                     {emp.photoUrl ? <img src={emp.photoUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-gray-900"><User size={40} className="text-white/10" /></div>}
                     {emp.descriptor && <div className="absolute top-2 right-2 w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_10px_rgba(16,185,129,0.5)] border-2 border-black" />}
@@ -296,7 +303,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         )}
 
         {activeTab === 'CONFIG' && (
-          <div className="space-y-8 animate-in slide-in-from-bottom-4">
+          <div className="space-y-6 md:space-y-8 animate-in slide-in-from-bottom-4">
             <div className="flex justify-between items-center px-4">
               <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest">Настройки сервера</h3>
               <div className="flex gap-3">
@@ -306,7 +313,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 </button>
               </div>
             </div>
-            <form onSubmit={(e) => e.preventDefault()} className="bg-white/5 p-10 rounded-[3rem] border border-white/5 grid grid-cols-1 md:grid-cols-2 gap-10 shadow-2xl">
+            <form onSubmit={(e) => e.preventDefault()} className="bg-white/5 p-5 md:p-10 rounded-[2rem] md:rounded-[3rem] border border-white/5 grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-10 shadow-2xl">
               {Object.keys(config).map(key => (
                 <div key={key} className="space-y-4">
                   <label className="text-[10px] text-gray-500 ml-5 uppercase font-black tracking-widest">{key}</label>
@@ -325,12 +332,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         )}
 
         {activeTab === 'TELEGRAM' && (
-          <div className="space-y-8 animate-in slide-in-from-bottom-4">
+          <div className="space-y-6 md:space-y-8 animate-in slide-in-from-bottom-4">
             <div className="flex justify-between items-center px-4">
               <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest">Telegram уведомления</h3>
             </div>
 
-            <div className="bg-white/5 p-10 rounded-[3rem] border border-white/5 shadow-2xl space-y-6">
+            <div className="bg-white/5 p-5 md:p-10 rounded-[2rem] md:rounded-[3rem] border border-white/5 shadow-2xl space-y-6">
               <p className="text-[11px] text-white/70 uppercase tracking-wider font-bold">
                 Отправка сводного отчета по сегодняшним логам в Telegram.
               </p>
@@ -344,7 +351,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 className="px-8 py-4 bg-emerald-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSyncing ? <Loader2 size={16} className="animate-spin" /> : <SendHorizontal size={16} />}
-                Отправить отчет
+                Отправить Excel отчет
               </button>
 
               {(!config.botToken || !config.chatId) && (

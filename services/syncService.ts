@@ -77,17 +77,8 @@ const buildPhotoCandidates = (rawPhoto: unknown, objectId: string, empId: string
       if (path) {
         candidates.push(`${SYSTEM_FACE_BASE_URL}/${path}`);
         candidates.push(`${SYSTEM_ROOT_URL}/${path}`);
-        if (/^[^/]+\.(jpg|jpeg|png|webp)$/i.test(path)) {
-          candidates.push(`${SYSTEM_FACE_BASE_URL}/uploads/${objectId}/${path}`);
-        }
       }
     }
-  }
-
-  // Fallback for legacy servers where photo path is not returned in API.
-  if (!raw) {
-    const fallback = `${SYSTEM_FACE_BASE_URL}/uploads/${objectId}/${empId}`;
-    candidates.push(`${fallback}.jpg`);
   }
 
   return unique(candidates);
@@ -128,7 +119,7 @@ const fetchImageAsBase64 = async (source: string): Promise<string | null> => {
 
 const pickPhotoForDisplay = (rawSource: string | null, downloadedBase64: string | null): string => {
   if (downloadedBase64) return downloadedBase64;
-  if (rawSource && (isDataUrl(rawSource) || isHttpUrl(rawSource))) return rawSource;
+  if (rawSource && isDataUrl(rawSource)) return rawSource;
   return '';
 };
 

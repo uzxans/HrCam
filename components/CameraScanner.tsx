@@ -19,9 +19,11 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   const LOCAL_DUPLICATE_WINDOW_MS = 60000;
   const UNKNOWN_FACE_COOLDOWN_MS = 8000;
   const PROCESSING_VISIBILITY_MS = 250;
+  const DUPLICATE_BANNER_COOLDOWN_MS = 15000;
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const isInitializingRef = useRef(false);
+  const successAudioRef = useRef<HTMLAudioElement | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [scanStatus, setScanStatus] = useState<'loading' | 'searching' | 'success' | 'duplicate' | 'cooldown' | 'error'>('loading');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -31,6 +33,7 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   const lastScannedIdRef = useRef<string | null>(null);
   const lastScanTimeRef = useRef<number>(0);
   const lastDeniedTimeRef = useRef<number>(0);
+  const lastDuplicateShownRef = useRef<number>(0);
 
   const backfillDescriptorsFromPhotos = useCallback(async (employees: Employee[]) => {
     if (!employees.length) return;
@@ -126,6 +129,11 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   }, [onError]);
 
   useEffect(() => {
+    successAudioRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+    successAudioRef.current.preload = 'auto';
+  }, []);
+
+  useEffect(() => {
     if (!stream || scanStatus === 'loading' || scanStatus === 'error') return;
     let timer: any;
     let active = true;
@@ -146,9 +154,12 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
           
           if (emp) {
             if (lastScannedIdRef.current === emp.id && now - lastScanTimeRef.current < LOCAL_DUPLICATE_WINDOW_MS) {
-              setMatchedEmployee(emp);
-              setScanStatus('duplicate');
-              onWake();
+              if (now - lastDuplicateShownRef.current > DUPLICATE_BANNER_COOLDOWN_MS) {
+                lastDuplicateShownRef.current = now;
+                setMatchedEmployee(emp);
+                setScanStatus('duplicate');
+                onWake();
+              }
             } else {
               setIsProcessing(true);
               setMatchedEmployee(emp);
@@ -172,7 +183,7 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
                 const type = (!lastLog || lastLog.type === AttendanceType.EXIT) ? AttendanceType.ENTRY : AttendanceType.EXIT;
                 onScanComplete(emp, type);
                 
-                new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3').play().catch(() => {});
+                successAudioRef.current?.play().catch(() => {});
                 setScanStatus('success');
               } finally {
                 setIsProcessing(false);
@@ -194,7 +205,7 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
             }
         }
       }
-      timer = setTimeout(loop, 100); 
+      timer = setTimeout(loop, 140); 
     };
 
     loop();

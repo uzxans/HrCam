@@ -53,18 +53,39 @@ export const sendTelegramReport = async (
   logs: AttendanceLog[],
   reportText: string
 ) => {
-  const header = "ID,Name,Type,Timestamp\n";
-  const csvContent = logs.map(l => 
-    `${l.employeeId},"${l.employeeName}",${l.type},${new Date(l.timestamp).toLocaleString()}`
-  ).join("\n");
-  
-  const blob = new Blob([header + csvContent], { type: 'text/csv' });
-  const formData = new FormData();
-  formData.append('chat_id', chatId);
-  formData.append('caption', `📊 Отчет посещаемости\n\n${reportText.substring(0, 500)}...`);
-  formData.append('document', blob, `report_${new Date().toISOString().split('T')[0]}.csv`);
-
   try {
+    const XLSX = await import('xlsx');
+    const excelRows = logs.map((log) => ({
+      ID: log.employeeId,
+      Name: log.employeeName,
+      Type: log.type === 'ENTRY' ? 'Пришел' : 'Ушел',
+      Timestamp: new Date(log.timestamp).toLocaleString('ru-RU')
+    }));
+
+    const workbook = XLSX.utils.book_new();
+    const summarySheet = XLSX.utils.aoa_to_sheet([
+      ['Отчет посещаемости'],
+      ['Дата', new Date().toLocaleDateString('ru-RU')],
+      ['Записей', logs.length.toString()],
+      [],
+      ['Комментарий'],
+      [reportText || 'Без комментария']
+    ]);
+    const logsSheet = XLSX.utils.json_to_sheet(excelRows);
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+    XLSX.utils.book_append_sheet(workbook, logsSheet, 'Logs');
+
+    const workbookBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob(
+      [workbookBuffer],
+      { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+    );
+
+    const formData = new FormData();
+    formData.append('chat_id', chatId);
+    formData.append('caption', `📊 Отчет посещаемости\n${new Date().toLocaleString('ru-RU')}`);
+    formData.append('document', blob, `report_${new Date().toISOString().split('T')[0]}.xlsx`);
+
     const response = await fetch(`https://api.telegram.org/bot${botToken}/sendDocument`, {
       method: 'POST',
       body: formData
