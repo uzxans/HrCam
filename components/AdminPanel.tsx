@@ -9,6 +9,8 @@ import { Employee, AttendanceLog, AttendanceType } from '../types';
 import * as storage from '../services/storage';
 import * as faceService from '../services/faceService';
 import { syncAndSaveEmployees, DbConfig, syncAttendanceToCloud } from '../services/syncService';
+import * as tg from '../services/telegramService';
+import * as gemini from '../services/geminiService';
 
 interface AdminPanelProps {
   onBack: () => void;
@@ -168,6 +170,33 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     }
   };
 
+  const handleSendTelegramReport = async () => {
+    if (!config.botToken || !config.chatId) {
+      setSyncStatus('Ошибка: заполните botToken и chatId');
+      setTimeout(() => setSyncStatus(null), 2500);
+      return;
+    }
+
+    setIsSyncing(true);
+    setSyncStatus('Формирование отчета...');
+    try {
+      const todaysLogs = storage.getTodaysLogs();
+      const reportText = await gemini.generateTelegramReport(todaysLogs);
+      const result = await tg.sendTelegramReport(config.botToken, config.chatId, todaysLogs, reportText);
+
+      if (result?.ok) {
+        setSyncStatus('Отчет отправлен в Telegram');
+      } else {
+        setSyncStatus(`Ошибка Telegram: ${result?.description || 'не удалось отправить'}`);
+      }
+    } catch (e: any) {
+      setSyncStatus(`Ошибка отчета: ${e?.message || 'неизвестно'}`);
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setSyncStatus(null), 3500);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-[#030303] text-gray-100 overflow-hidden font-sans">
       <div className="p-8 bg-black/40 border-b border-white/5 flex items-center justify-between">
@@ -277,12 +306,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 </button>
               </div>
             </div>
-            <div className="bg-white/5 p-10 rounded-[3rem] border border-white/5 grid grid-cols-1 md:grid-cols-2 gap-10 shadow-2xl">
+            <form onSubmit={(e) => e.preventDefault()} className="bg-white/5 p-10 rounded-[3rem] border border-white/5 grid grid-cols-1 md:grid-cols-2 gap-10 shadow-2xl">
               {Object.keys(config).map(key => (
                 <div key={key} className="space-y-4">
                   <label className="text-[10px] text-gray-500 ml-5 uppercase font-black tracking-widest">{key}</label>
                   <input 
                     type={key === 'pass' || key === 'botToken' ? 'password' : 'text'}
+                    autoComplete={key === 'pass' || key === 'botToken' ? 'new-password' : 'off'}
                     value={(config as any)[key]} 
                     onChange={e => setConfig({...config, [key]: e.target.value})}
                     className="w-full bg-black border border-white/10 focus:border-emerald-500/40 rounded-3xl p-5 text-sm font-mono text-emerald-400 outline-none transition-all"
@@ -290,6 +320,38 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                   />
                 </div>
               ))}
+            </form>
+          </div>
+        )}
+
+        {activeTab === 'TELEGRAM' && (
+          <div className="space-y-8 animate-in slide-in-from-bottom-4">
+            <div className="flex justify-between items-center px-4">
+              <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest">Telegram уведомления</h3>
+            </div>
+
+            <div className="bg-white/5 p-10 rounded-[3rem] border border-white/5 shadow-2xl space-y-6">
+              <p className="text-[11px] text-white/70 uppercase tracking-wider font-bold">
+                Отправка сводного отчета по сегодняшним логам в Telegram.
+              </p>
+              <div className="text-[10px] text-emerald-400 uppercase tracking-widest font-black">
+                Логов за сегодня: {logs.length}
+              </div>
+
+              <button
+                onClick={handleSendTelegramReport}
+                disabled={isSyncing || !config.botToken || !config.chatId}
+                className="px-8 py-4 bg-emerald-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSyncing ? <Loader2 size={16} className="animate-spin" /> : <SendHorizontal size={16} />}
+                Отправить отчет
+              </button>
+
+              {(!config.botToken || !config.chatId) && (
+                <p className="text-[10px] text-orange-400 uppercase tracking-wider font-bold">
+                  Заполните botToken и chatId во вкладке «Сервер».
+                </p>
+              )}
             </div>
           </div>
         )}

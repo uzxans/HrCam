@@ -178,7 +178,7 @@ const App: React.FC = () => {
                 <button onClick={() => setIsPasswordModalOpen(false)} className="absolute top-8 right-8 text-white/30"><X size={24} /></button>
                 <h3 className="text-xl font-black text-white mb-8 text-center uppercase">Админ-панель</h3>
                 <form onSubmit={(e) => { e.preventDefault(); if (passwordInput === ADMIN_PASSWORD) { setView('ADMIN'); setIsPasswordModalOpen(false); setPasswordInput(''); } else { setPasswordError(true); setPasswordInput(''); } }} className="space-y-6">
-                  <input autoFocus type="password" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} placeholder="••••" className={`w-full bg-black border-2 ${passwordError ? 'border-red-500' : 'border-white/10'} rounded-2xl p-4 text-center text-4xl font-mono text-white outline-none`} />
+                  <input autoFocus name="adminPassword" autoComplete="current-password" type="password" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} placeholder="••••" className={`w-full bg-black border-2 ${passwordError ? 'border-red-500' : 'border-white/10'} rounded-2xl p-4 text-center text-4xl font-mono text-white outline-none`} />
                   <button type="submit" className="w-full bg-emerald-600 text-white font-black py-4 rounded-2xl uppercase tracking-widest">Войти</button>
                 </form>
               </div>

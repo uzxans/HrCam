@@ -16,10 +16,15 @@ interface CameraScannerProps {
 const CameraScanner: React.FC<CameraScannerProps> = ({ 
   onScanComplete, onDenied, onError, powerMode, onWake
 }) => {
+  const LOCAL_DUPLICATE_WINDOW_MS = 60000;
+  const UNKNOWN_FACE_COOLDOWN_MS = 8000;
+  const PROCESSING_VISIBILITY_MS = 250;
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const isInitializingRef = useRef(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const [scanStatus, setScanStatus] = useState<'loading' | 'searching' | 'detecting' | 'success' | 'cooldown' | 'error'>('loading');
+  const [scanStatus, setScanStatus] = useState<'loading' | 'searching' | 'success' | 'duplicate' | 'cooldown' | 'error'>('loading');
+  const [isProcessing, setIsProcessing] = useState(false);
   const [matchedEmployee, setMatchedEmployee] = useState<Employee | null>(null);
   const employeesRef = useRef<Employee[]>([]);
   
@@ -124,13 +129,14 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
     if (!stream || scanStatus === 'loading' || scanStatus === 'error') return;
     let timer: any;
     let active = true;
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
     const loop = async () => {
       if (!active) return;
       if (powerMode === 'SLEEP') { timer = setTimeout(loop, 1000); return; }
       
       // Keep running loop but ignore results if in success state locally
-      if (scanStatus === 'success' || scanStatus === 'cooldown') { timer = setTimeout(loop, 400); return; }
+      if (scanStatus === 'success' || scanStatus === 'cooldown' || scanStatus === 'duplicate' || isProcessing) { timer = setTimeout(loop, 300); return; }
 
       if (videoRef.current && videoRef.current.readyState === 4) {
         const matchedId = await faceService.recognizeFace(videoRef.current);
@@ -139,29 +145,43 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
           const now = Date.now();
           
           if (emp) {
-            // Check last scan time (local state check for UI responsiveness)
-            const diff = now - lastScanTimeRef.current;
-            
-            if (lastScannedIdRef.current !== emp.id || diff > 15000) {
-              lastScannedIdRef.current = emp.id;
-              lastScanTimeRef.current = now;
-              
-              // Get last recorded log to determine Entry/Exit
-              const lastLog = storage.getLastLogForEmployee(emp.id);
-              const type = (!lastLog || lastLog.type === AttendanceType.EXIT) ? AttendanceType.ENTRY : AttendanceType.EXIT;
-              
-              // Only trigger completion if it's not a tiny-duplicate (handled in App.tsx as well)
-              onScanComplete(emp, type);
-              
-              new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3').play().catch(()=>{});
+            if (lastScannedIdRef.current === emp.id && now - lastScanTimeRef.current < LOCAL_DUPLICATE_WINDOW_MS) {
               setMatchedEmployee(emp);
-              setScanStatus('success');
+              setScanStatus('duplicate');
               onWake();
+            } else {
+              setIsProcessing(true);
+              setMatchedEmployee(emp);
+              onWake();
+
+              try {
+                await sleep(PROCESSING_VISIBILITY_MS);
+
+                // Hard duplicate guard: never record the same employee twice within 1 minute.
+                const lastLog = storage.getLastLogForEmployee(emp.id);
+                if (lastLog && now - new Date(lastLog.timestamp).getTime() < LOCAL_DUPLICATE_WINDOW_MS) {
+                  lastScannedIdRef.current = emp.id;
+                  lastScanTimeRef.current = now;
+                  setScanStatus('duplicate');
+                  return;
+                }
+
+                lastScannedIdRef.current = emp.id;
+                lastScanTimeRef.current = now;
+
+                const type = (!lastLog || lastLog.type === AttendanceType.EXIT) ? AttendanceType.ENTRY : AttendanceType.EXIT;
+                onScanComplete(emp, type);
+                
+                new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3').play().catch(() => {});
+                setScanStatus('success');
+              } finally {
+                setIsProcessing(false);
+              }
             }
           }
         } else {
             const now = Date.now();
-            if (now - lastDeniedTimeRef.current > 8000) {
+            if (now - lastDeniedTimeRef.current > UNKNOWN_FACE_COOLDOWN_MS) {
                  const detection = await faceService.detectFace(videoRef.current);
                  if (detection) {
                      lastDeniedTimeRef.current = now;
@@ -179,16 +199,19 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
 
     loop();
     return () => { active = false; clearTimeout(timer); };
-  }, [stream, scanStatus, powerMode, onScanComplete, onWake, onDenied]);
+  }, [stream, scanStatus, powerMode, onScanComplete, onWake, onDenied, isProcessing]);
 
   useEffect(() => {
-    if (scanStatus === 'success') {
-      // Much faster reset to keep scan active
+    if (scanStatus === 'success' || scanStatus === 'duplicate') {
+      // Fast reset to keep scanner active and show a short feedback overlay.
+      const holdMs = scanStatus === 'success' ? 800 : 1200;
       const t = setTimeout(() => {
         setScanStatus('cooldown');
-        setMatchedEmployee(null);
-        setTimeout(() => setScanStatus('searching'), 300);
-      }, 800);
+        setTimeout(() => {
+          setMatchedEmployee(null);
+          setScanStatus('searching');
+        }, 350);
+      }, holdMs);
       return () => clearTimeout(t);
     }
   }, [scanStatus]);
@@ -227,8 +250,17 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
         </div>
       )}
 
+      {isProcessing && (
+        <div className="absolute inset-0 z-[55] pointer-events-none flex items-center justify-center">
+          <div className="bg-black/75 border border-emerald-500/40 rounded-3xl px-8 py-5 flex items-center gap-3 shadow-2xl">
+            <Loader2 className="animate-spin text-emerald-400 w-5 h-5" />
+            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-300">Идет обработка...</p>
+          </div>
+        </div>
+      )}
+
       {/* Simplified detection frame */}
-      <div className={`absolute inset-0 pointer-events-none flex flex-col items-center justify-center z-30 transition-opacity duration-500 ${scanStatus === 'searching' ? 'opacity-100' : 'opacity-0'}`}>
+      <div className={`absolute inset-0 pointer-events-none flex flex-col items-center justify-center z-30 transition-opacity duration-500 ${scanStatus === 'searching' || isProcessing ? 'opacity-100' : 'opacity-0'}`}>
          <div className="w-72 h-72 border-2 border-white/5 rounded-[4rem] relative flex items-center justify-center">
             <div className="absolute top-0 left-0 w-12 h-12 border-t-4 border-l-4 border-emerald-500 rounded-tl-3xl shadow-[0_0_15px_rgba(16,185,129,0.3)]" />
             <div className="absolute top-0 right-0 w-12 h-12 border-t-4 border-r-4 border-emerald-500 rounded-tr-3xl shadow-[0_0_15px_rgba(16,185,129,0.3)]" />
@@ -245,6 +277,19 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
       {/* The Success State no longer closes the screen, just adds a glow/overlay effect */}
       {scanStatus === 'success' && (
          <div className="absolute inset-0 bg-emerald-500/10 z-[50] pointer-events-none animate-pulse" />
+      )}
+
+      {scanStatus === 'duplicate' && matchedEmployee && (
+         <div className="absolute inset-0 z-[56] pointer-events-none flex items-center justify-center">
+            <div className="bg-amber-500/90 text-white px-7 py-4 rounded-[2rem] shadow-[0_20px_50px_rgba(245,158,11,0.35)] border border-white/20 flex items-center gap-3">
+              <div className="bg-white/20 p-2 rounded-full"><UserCheck size={18} /></div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest opacity-90">Уже отмечен</p>
+                <p className="text-sm font-black uppercase tracking-tight leading-none mt-0.5">{matchedEmployee.name}</p>
+                <p className="text-[9px] uppercase tracking-wider mt-1 opacity-90">Повтор через 1 минуту</p>
+              </div>
+            </div>
+         </div>
       )}
     </div>
   );

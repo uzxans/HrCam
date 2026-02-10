@@ -84,8 +84,11 @@ const buildPhotoCandidates = (rawPhoto: unknown, objectId: string, empId: string
     }
   }
 
-  const fallback = `${SYSTEM_FACE_BASE_URL}/uploads/${objectId}/${empId}`;
-  candidates.push(`${fallback}.jpg`, `${fallback}.jpeg`, `${fallback}.png`);
+  // Fallback for legacy servers where photo path is not returned in API.
+  if (!raw) {
+    const fallback = `${SYSTEM_FACE_BASE_URL}/uploads/${objectId}/${empId}`;
+    candidates.push(`${fallback}.jpg`);
+  }
 
   return unique(candidates);
 };
@@ -98,8 +101,7 @@ const fetchImageAsBase64 = async (source: string): Promise<string | null> => {
   // Using multiple proxies to bypass CORS when downloading staff photos.
   const proxies = [
     `https://wsrv.nl/?url=${encodeURIComponent(source)}&output=jpg&w=640&q=85`,
-    `https://corsproxy.io/?${encodeURIComponent(source)}`,
-    source
+    `https://corsproxy.io/?${encodeURIComponent(source)}`
   ];
 
   for (const proxyUrl of proxies) {
@@ -124,11 +126,9 @@ const fetchImageAsBase64 = async (source: string): Promise<string | null> => {
   return null;
 };
 
-const pickPhotoForDisplay = (candidates: string[], downloadedBase64: string | null): string => {
+const pickPhotoForDisplay = (rawSource: string | null, downloadedBase64: string | null): string => {
   if (downloadedBase64) return downloadedBase64;
-  for (const source of candidates) {
-    if (isDataUrl(source) || isHttpUrl(source)) return source;
-  }
+  if (rawSource && (isDataUrl(rawSource) || isHttpUrl(rawSource))) return rawSource;
   return '';
 };
 
@@ -167,6 +167,7 @@ export const syncAndSaveEmployees = async (
     const empId = item.id.toString();
     
     const objectId = config.objectId || '41';
+    const preferredPhotoSource = normalizeImageSource(typeof item.photo === 'string' ? item.photo : '');
     const photoCandidates = buildPhotoCandidates(item.photo, objectId, empId);
 
     if (onProgress) onProgress(i + 1, data.length, `Обработка биометрии: ${fullName}`);
@@ -178,7 +179,7 @@ export const syncAndSaveEmployees = async (
         base64 = await fetchImageAsBase64(source);
         if (base64) break;
       }
-      const photoForDisplay = pickPhotoForDisplay(photoCandidates, base64);
+      const photoForDisplay = pickPhotoForDisplay(preferredPhotoSource, base64);
       
       // 2. Extract Face Embeddings (Descriptor) using face-api.js
       let descriptor = null;
