@@ -128,7 +128,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
       });
       
       await refreshData();
-      setSyncStatus(`Готово: ${result.count} чел.`);
+      setSyncStatus(`Готово: обновлено ${result.count}, удалено ${result.removed}`);
     } catch (e: any) {
       setSyncStatus(`Ошибка: ${e.message}`);
     } finally {

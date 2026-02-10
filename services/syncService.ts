@@ -126,9 +126,10 @@ const pickPhotoForDisplay = (rawSource: string | null, downloadedBase64: string 
 export const syncAndSaveEmployees = async (
   config: DbConfig,
   onProgress?: (current: number, total: number, message: string) => void
-): Promise<{count: number, errors: number}> => {
+): Promise<{count: number, errors: number, removed: number}> => {
   let count = 0;
   let errors = 0;
+  let removed = 0;
   if (onProgress) onProgress(0, 0, 'Инициализация нейросети...');
   await faceService.loadModels();
 
@@ -153,13 +154,19 @@ export const syncAndSaveEmployees = async (
   if (!Array.isArray(data)) throw new Error('БД вернула некорректный формат или пустой список');
   const existingEmployees = await storage.getEmployees();
   const existingById = new Map(existingEmployees.map((emp) => [emp.id, emp]));
+  const remoteEmployeeIds = new Set<string>();
+  const objectId = config.objectId || '41';
 
   for (let i = 0; i < data.length; i++) {
     const item = data[i];
+    if (item?.id === undefined || item?.id === null) {
+      errors++;
+      continue;
+    }
+
     const fullName = item.full_name || item.name || 'Без имени';
     const empId = item.id.toString();
-    
-    const objectId = config.objectId || '41';
+    remoteEmployeeIds.add(empId);
     const existingEmployee = existingById.get(empId);
     const preferredPhotoSource = normalizeImageSource(typeof item.photo === 'string' ? item.photo : '');
     const photoCandidates = buildPhotoCandidates(item.photo);
@@ -203,11 +210,33 @@ export const syncAndSaveEmployees = async (
       errors++; 
     }
   }
-  return { count, errors };
+
+  // Remove local employees that are no longer present in active remote list.
+  // Safety: skip mass cleanup when remote returned an empty list.
+  if (remoteEmployeeIds.size > 0) {
+    const staleEmployees = existingEmployees.filter((emp) => {
+      const sameObject = !emp.objectId || emp.objectId === objectId;
+      return sameObject && !remoteEmployeeIds.has(emp.id);
+    });
+
+    if (staleEmployees.length) {
+      await Promise.all(staleEmployees.map((emp) => storage.deleteEmployee(emp.id)));
+      removed = staleEmployees.length;
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('faceclock:employees-updated'));
+  }
+
+  return { count, errors, removed };
 };
 
-export const syncAttendanceToCloud = async (config: DbConfig): Promise<boolean> => {
-  const pairs = storage.getAttendancePairs();
+export const syncAttendanceToCloud = async (
+  config: DbConfig,
+  options: { maxPairs?: number } = {}
+): Promise<boolean> => {
+  const pairs = storage.getAttendancePairs(options.maxPairs);
   if (pairs.length === 0) return true;
 
   try {

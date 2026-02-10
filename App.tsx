@@ -10,9 +10,13 @@ import * as tg from './services/telegramService';
 
 const ADMIN_PASSWORD = '6411131';
 const HOURLY_SQL_SYNC_LAST_SLOT_KEY = 'faceclock_sql_last_hourly_slot';
-const AUTO_EMPLOYEE_SYNC_LAST_SLOT_KEY = 'faceclock_employee_sync_slot';
+const HYBRID_SQL_SYNC_LAST_TS_KEY = 'faceclock_sql_last_hybrid_ts';
+const AUTO_EMPLOYEE_SYNC_LAST_TS_KEY = 'faceclock_employee_sync_ts';
 const DIM_AFTER_MS = 30000;
 const SLEEP_AFTER_MS = 50000;
+const HYBRID_SQL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const HYBRID_SQL_SYNC_BATCH_PAIRS = 20;
+const AUTO_EMPLOYEE_SYNC_INTERVAL_MS = 10 * 60 * 1000;
 
 const buildHourSlot = (date: Date): string => {
   const year = date.getFullYear();
@@ -22,13 +26,12 @@ const buildHourSlot = (date: Date): string => {
   return `${year}-${month}-${day} ${hour}`;
 };
 
-const buildTenMinuteSlot = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  const hour = `${date.getHours()}`.padStart(2, '0');
-  const tenMinuteBlock = Math.floor(date.getMinutes() / 10);
-  return `${year}-${month}-${day} ${hour}:${tenMinuteBlock}`;
+const isIntervalDue = (storageKey: string, intervalMs: number): boolean => {
+  const raw = localStorage.getItem(storageKey);
+  const lastTs = raw ? Number(raw) : 0;
+  if (!Number.isFinite(lastTs) || lastTs <= 0) return true;
+  if (lastTs > Date.now() + 60000) return true;
+  return Date.now() - lastTs >= intervalMs;
 };
 
 const App: React.FC = () => {
@@ -42,6 +45,7 @@ const App: React.FC = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const deniedToastTimerRef = useRef<number | null>(null);
+  const isCloudSyncingRef = useRef(false);
   const isEmployeeSyncingRef = useRef(false);
 
   // Power Management
@@ -64,11 +68,12 @@ const App: React.FC = () => {
     setPowerMode((prevMode) => (prevMode === 'ACTIVE' ? prevMode : 'ACTIVE'));
   }, []);
 
-  const attemptCloudSync = useCallback(async (): Promise<boolean> => {
-    if (!navigator.onLine || isCloudSyncing) return false;
+  const attemptCloudSync = useCallback(async (maxPairs?: number): Promise<boolean> => {
+    if (!navigator.onLine || isCloudSyncingRef.current) return false;
     const apiUrl = localStorage.getItem('sync_api_url');
     if (!apiUrl) return false;
 
+    isCloudSyncingRef.current = true;
     setIsCloudSyncing(true);
     try {
       const ok = await syncAttendanceToCloud({
@@ -78,14 +83,15 @@ const App: React.FC = () => {
         user: localStorage.getItem('db_user') || '',
         pass: localStorage.getItem('db_pass') || '',
         table: 'time_hr'
-      });
+      }, { maxPairs });
       return ok;
     } catch (e) {
       return false;
     } finally {
+      isCloudSyncingRef.current = false;
       setIsCloudSyncing(false);
     }
-  }, [isCloudSyncing]);
+  }, []);
 
   const handleScanComplete = useCallback((employee: Employee, type: AttendanceType) => {
     handleUserActivity();
@@ -128,8 +134,20 @@ const App: React.FC = () => {
     }
   }, [handleUserActivity]);
 
+  const attemptHybridSqlSync = useCallback(async () => {
+    if (!navigator.onLine || isCloudSyncingRef.current) return;
+    const pairs = storage.getAttendancePairs();
+    if (!pairs.length) return;
+    if (!isIntervalDue(HYBRID_SQL_SYNC_LAST_TS_KEY, HYBRID_SQL_SYNC_INTERVAL_MS)) return;
+
+    const ok = await attemptCloudSync(HYBRID_SQL_SYNC_BATCH_PAIRS);
+    if (ok) {
+      localStorage.setItem(HYBRID_SQL_SYNC_LAST_TS_KEY, Date.now().toString());
+    }
+  }, [attemptCloudSync]);
+
   const attemptHourlySqlSync = useCallback(async () => {
-    if (!navigator.onLine || isCloudSyncing) return;
+    if (!navigator.onLine || isCloudSyncingRef.current) return;
     const pairs = storage.getAttendancePairs();
     if (!pairs.length) return;
 
@@ -141,17 +159,15 @@ const App: React.FC = () => {
     if (ok) {
       localStorage.setItem(HOURLY_SQL_SYNC_LAST_SLOT_KEY, slot);
     }
-  }, [attemptCloudSync, isCloudSyncing]);
+  }, [attemptCloudSync]);
 
-  const attemptEmployeeAutoSync = useCallback(async () => {
+  const attemptEmployeeAutoSync = useCallback(async (force = false) => {
     if (!navigator.onLine || isEmployeeSyncingRef.current) return;
 
     const apiUrl = localStorage.getItem('sync_api_url');
     if (!apiUrl) return;
 
-    const slot = buildTenMinuteSlot(new Date());
-    const lastSlot = localStorage.getItem(AUTO_EMPLOYEE_SYNC_LAST_SLOT_KEY);
-    if (lastSlot === slot) return;
+    if (!force && !isIntervalDue(AUTO_EMPLOYEE_SYNC_LAST_TS_KEY, AUTO_EMPLOYEE_SYNC_INTERVAL_MS)) return;
 
     isEmployeeSyncingRef.current = true;
     try {
@@ -165,7 +181,7 @@ const App: React.FC = () => {
         objectId: localStorage.getItem('db_object') || '41',
         activeStatus: localStorage.getItem('db_status') || '100',
       });
-      localStorage.setItem(AUTO_EMPLOYEE_SYNC_LAST_SLOT_KEY, slot);
+      localStorage.setItem(AUTO_EMPLOYEE_SYNC_LAST_TS_KEY, Date.now().toString());
     } catch (e) {
       // Stay silent in scanner mode and retry next cycle.
     } finally {
@@ -210,14 +226,36 @@ const App: React.FC = () => {
 
   useEffect(() => {
     // Try sync tasks on startup and then every minute.
+    void attemptHybridSqlSync();
     void attemptHourlySqlSync();
-    void attemptEmployeeAutoSync();
+    void attemptEmployeeAutoSync(true);
     const timer = window.setInterval(() => {
+      void attemptHybridSqlSync();
       void attemptHourlySqlSync();
       void attemptEmployeeAutoSync();
     }, 60000);
     return () => window.clearInterval(timer);
-  }, [attemptHourlySqlSync, attemptEmployeeAutoSync]);
+  }, [attemptHybridSqlSync, attemptHourlySqlSync, attemptEmployeeAutoSync]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      void attemptHybridSqlSync();
+      void attemptEmployeeAutoSync(true);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void attemptHybridSqlSync();
+        void attemptEmployeeAutoSync(true);
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [attemptHybridSqlSync, attemptEmployeeAutoSync]);
 
   return (
     <div className="h-screen w-screen bg-black relative overflow-hidden font-sans">

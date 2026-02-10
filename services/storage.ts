@@ -122,7 +122,7 @@ export const getLastLogForEmployee = (employeeId: string): AttendanceLog | undef
   return snapshot[employeeId];
 };
 
-export const getAttendancePairs = () => {
+export const getAttendancePairs = (limit?: number) => {
   const logs = getLogs().filter(log => !log.synced);
   const users: Record<string, { iduser: string, date: string, start: string, end: string, logIds: string[] }> = {};
 
@@ -144,7 +144,11 @@ export const getAttendancePairs = () => {
     }
   });
 
-  return Object.values(users);
+  const pairs = Object.values(users);
+  if (typeof limit === 'number' && limit > 0) {
+    return pairs.slice(0, limit);
+  }
+  return pairs;
 };
 
 export const addDeniedAttempt = (photoBase64: string): void => {

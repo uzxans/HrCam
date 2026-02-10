@@ -92,24 +92,51 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
     }
   }, []);
 
+  const refreshEmployeesFromStorage = useCallback(async () => {
+    const data = await storage.getEmployees();
+    employeesRef.current = data;
+    faceService.initializeMatcher(data);
+    void backfillDescriptorsFromPhotos(data);
+  }, [backfillDescriptorsFromPhotos]);
+
   const initSystem = useCallback(async () => {
     try {
       setScanStatus('loading');
       await faceService.loadModels();
-      const data = await storage.getEmployees();
-      employeesRef.current = data;
-      faceService.initializeMatcher(data);
+      await refreshEmployeesFromStorage();
       setScanStatus('searching');
-      void backfillDescriptorsFromPhotos(data);
     } catch (e) {
       setScanStatus('error');
       onError("Ошибка AI моделей");
     }
-  }, [onError, backfillDescriptorsFromPhotos]);
+  }, [onError, refreshEmployeesFromStorage]);
 
   useEffect(() => {
     initSystem();
   }, [initSystem]);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      if (!active) return;
+      await refreshEmployeesFromStorage();
+    };
+
+    const handleEmployeesUpdated = () => {
+      void refresh();
+    };
+
+    window.addEventListener('faceclock:employees-updated', handleEmployeesUpdated);
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 60000);
+
+    return () => {
+      active = false;
+      window.removeEventListener('faceclock:employees-updated', handleEmployeesUpdated);
+      window.clearInterval(timer);
+    };
+  }, [refreshEmployeesFromStorage]);
 
   useEffect(() => {
     if (isInitializingRef.current) return;
