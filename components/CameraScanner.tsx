@@ -20,6 +20,10 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   const UNKNOWN_FACE_COOLDOWN_MS = 8000;
   const PROCESSING_VISIBILITY_MS = 250;
   const DUPLICATE_BANNER_COOLDOWN_MS = 15000;
+  // Practical threshold for approximately <=30cm on a 640x480 front camera.
+  const MIN_FACE_COVERAGE_RATIO = 0.2;
+  const TOO_FAR_HINT_COOLDOWN_MS = 1500;
+  const TOO_FAR_HINT_VISIBLE_MS = 1200;
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const isInitializingRef = useRef(false);
@@ -27,6 +31,7 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [scanStatus, setScanStatus] = useState<'loading' | 'searching' | 'success' | 'duplicate' | 'cooldown' | 'error'>('loading');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isTooFarHintVisible, setIsTooFarHintVisible] = useState(false);
   const [matchedEmployee, setMatchedEmployee] = useState<Employee | null>(null);
   const employeesRef = useRef<Employee[]>([]);
   
@@ -34,6 +39,28 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   const lastScanTimeRef = useRef<number>(0);
   const lastDeniedTimeRef = useRef<number>(0);
   const lastDuplicateShownRef = useRef<number>(0);
+  const lastTooFarHintTimeRef = useRef<number>(0);
+  const tooFarHintTimerRef = useRef<number | null>(null);
+
+  const getFaceCoverageRatio = useCallback((detection: any, video: HTMLVideoElement): number => {
+    if (!detection || !video.videoWidth || !video.videoHeight) return 0;
+    const box = detection.box || detection.detection?.box || detection.alignedRect?.box;
+    if (!box) return 0;
+    const widthRatio = box.width / video.videoWidth;
+    const heightRatio = box.height / video.videoHeight;
+    return Math.max(widthRatio, heightRatio);
+  }, []);
+
+  const showTooFarHint = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTooFarHintTimeRef.current < TOO_FAR_HINT_COOLDOWN_MS) return;
+    lastTooFarHintTimeRef.current = now;
+    setIsTooFarHintVisible(true);
+    if (tooFarHintTimerRef.current) {
+      window.clearTimeout(tooFarHintTimerRef.current);
+    }
+    tooFarHintTimerRef.current = window.setTimeout(() => setIsTooFarHintVisible(false), TOO_FAR_HINT_VISIBLE_MS);
+  }, [TOO_FAR_HINT_COOLDOWN_MS, TOO_FAR_HINT_VISIBLE_MS]);
 
   const backfillDescriptorsFromPhotos = useCallback(async (employees: Employee[]) => {
     if (!employees.length) return;
@@ -157,6 +184,16 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
       if (scanStatus === 'success' || scanStatus === 'cooldown' || scanStatus === 'duplicate' || isProcessing) { timer = setTimeout(loop, 300); return; }
 
       if (videoRef.current && videoRef.current.readyState === 4) {
+        const faceDetection = await faceService.detectFace(videoRef.current);
+        if (faceDetection) {
+          const faceCoverageRatio = getFaceCoverageRatio(faceDetection, videoRef.current);
+          if (faceCoverageRatio < MIN_FACE_COVERAGE_RATIO) {
+            showTooFarHint();
+            timer = setTimeout(loop, 180);
+            return;
+          }
+        }
+
         const matchedId = await faceService.recognizeFace(videoRef.current);
         if (matchedId) {
           const emp = employeesRef.current.find(e => e.id === matchedId);
@@ -202,16 +239,13 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
           }
         } else {
             const now = Date.now();
-            if (now - lastDeniedTimeRef.current > UNKNOWN_FACE_COOLDOWN_MS) {
-                 const detection = await faceService.detectFace(videoRef.current);
-                 if (detection) {
+            if (now - lastDeniedTimeRef.current > UNKNOWN_FACE_COOLDOWN_MS && faceDetection) {
                      lastDeniedTimeRef.current = now;
                      const canvas = document.createElement('canvas');
                      canvas.width = videoRef.current.videoWidth;
                      canvas.height = videoRef.current.videoHeight;
                      canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
                      onDenied(canvas.toDataURL('image/jpeg', 0.7));
-                 }
             }
         }
       }
@@ -220,7 +254,15 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
 
     loop();
     return () => { active = false; clearTimeout(timer); };
-  }, [stream, scanStatus, powerMode, onScanComplete, onWake, onDenied, isProcessing]);
+  }, [stream, scanStatus, powerMode, onScanComplete, onWake, onDenied, isProcessing, getFaceCoverageRatio, showTooFarHint]);
+
+  useEffect(() => {
+    return () => {
+      if (tooFarHintTimerRef.current) {
+        window.clearTimeout(tooFarHintTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (scanStatus === 'success' || scanStatus === 'duplicate') {
@@ -311,6 +353,14 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
               </div>
             </div>
          </div>
+      )}
+
+      {isTooFarHintVisible && scanStatus !== 'success' && (
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-[56] pointer-events-none">
+          <div className="bg-slate-900/90 text-white px-6 py-3 rounded-2xl border border-white/20 shadow-2xl">
+            <p className="text-[10px] font-black uppercase tracking-widest text-amber-300">Подойдите ближе к камере (~30 см)</p>
+          </div>
+        </div>
       )}
     </div>
   );
