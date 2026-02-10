@@ -1,0 +1,7 @@
+{
+  "name": "FaceClock AI",
+  "description": "Offline-first employee attendance tracker with facial recognition simulation and AI-powered reporting.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
