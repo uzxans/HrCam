@@ -13,6 +13,8 @@ interface CameraScannerProps {
   onWake: () => void;
 }
 
+const SUCCESS_SOUND_DATA_KEY = 'faceclock_success_sound_data_url';
+
 const CameraScanner: React.FC<CameraScannerProps> = ({ 
   onScanComplete, onDenied, onError, powerMode, onWake
 }) => {
@@ -28,6 +30,7 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const isInitializingRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const customSuccessAudioRef = useRef<HTMLAudioElement | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [scanStatus, setScanStatus] = useState<'loading' | 'searching' | 'success' | 'duplicate' | 'cooldown' | 'error'>('loading');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -65,6 +68,21 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
 
   const playSuccessTone = useCallback(async () => {
     try {
+      const customSoundData = localStorage.getItem(SUCCESS_SOUND_DATA_KEY);
+      if (customSoundData) {
+        if (!customSuccessAudioRef.current || customSuccessAudioRef.current.src !== customSoundData) {
+          customSuccessAudioRef.current = new Audio(customSoundData);
+          customSuccessAudioRef.current.preload = 'auto';
+          customSuccessAudioRef.current.volume = 1;
+        }
+        const customAudio = customSuccessAudioRef.current;
+        if (customAudio) {
+          customAudio.currentTime = 0;
+          await customAudio.play();
+          return;
+        }
+      }
+
       const ctx = getAudioContext();
       if (!ctx) return;
       if (ctx.state === 'suspended') {
@@ -90,6 +108,20 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
       // Do not block recognition flow when audio cannot play.
     }
   }, [getAudioContext]);
+
+  const refreshSuccessSound = useCallback(() => {
+    const soundData = localStorage.getItem(SUCCESS_SOUND_DATA_KEY) || '';
+    if (!soundData) {
+      customSuccessAudioRef.current = null;
+      return;
+    }
+    if (!customSuccessAudioRef.current || customSuccessAudioRef.current.src !== soundData) {
+      const audio = new Audio(soundData);
+      audio.preload = 'auto';
+      audio.volume = 1;
+      customSuccessAudioRef.current = audio;
+    }
+  }, []);
 
   const getFaceCoverageRatio = useCallback((detection: any, video: HTMLVideoElement): number => {
     if (!detection || !video.videoWidth || !video.videoHeight) return 0;
@@ -249,6 +281,18 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   }, [unlockAudio]);
 
   useEffect(() => {
+    refreshSuccessSound();
+    const handleSoundUpdated = () => {
+      refreshSuccessSound();
+      void unlockAudio();
+    };
+    window.addEventListener('faceclock:success-sound-updated', handleSoundUpdated);
+    return () => {
+      window.removeEventListener('faceclock:success-sound-updated', handleSoundUpdated);
+    };
+  }, [refreshSuccessSound, unlockAudio]);
+
+  useEffect(() => {
     if (!stream || scanStatus === 'loading' || scanStatus === 'error') return;
     let timer: any;
     let active = true;
@@ -348,6 +392,10 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
     return () => {
       if (audioContextRef.current) {
         void audioContextRef.current.close().catch(() => {});
+      }
+      if (customSuccessAudioRef.current) {
+        customSuccessAudioRef.current.pause();
+        customSuccessAudioRef.current.currentTime = 0;
       }
       if (tooFarHintTimerRef.current) {
         window.clearTimeout(tooFarHintTimerRef.current);

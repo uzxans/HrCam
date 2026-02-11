@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   ArrowLeft, RefreshCw, Save, User, Loader2, Settings2, FolderOpen, 
   Users, CheckCircle2, Database, MessageSquare, SendHorizontal, 
-  Globe, CloudCheck, Info, ScanFace, FileUp, Upload, Zap, DownloadCloud
+  Globe, CloudCheck, Info, ScanFace, FileUp, Upload, Zap, DownloadCloud, Volume2, Play, Trash2
 } from 'lucide-react';
 import { Employee, AttendanceLog, AttendanceType } from '../types';
 import * as storage from '../services/storage';
@@ -15,6 +15,11 @@ interface AdminPanelProps {
   onBack: () => void;
 }
 
+const SUCCESS_SOUND_DATA_KEY = 'faceclock_success_sound_data_url';
+const SUCCESS_SOUND_NAME_KEY = 'faceclock_success_sound_name';
+const SUCCESS_SOUND_SIZE_KEY = 'faceclock_success_sound_size';
+const MAX_SUCCESS_SOUND_FILE_BYTES = 2 * 1024 * 1024; // 2MB
+
 const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [logs, setLogs] = useState<AttendanceLog[]>([]);
@@ -24,7 +29,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const [progress, setProgress] = useState<{current: number, total: number, message: string} | null>(null);
   
   const configFileInputRef = useRef<HTMLInputElement>(null);
+  const successSoundFileInputRef = useRef<HTMLInputElement>(null);
   const lastProgressUpdateRef = useRef(0);
+  const [successSoundMeta, setSuccessSoundMeta] = useState<{ name: string; size: number } | null>(() => {
+    const storedName = localStorage.getItem(SUCCESS_SOUND_NAME_KEY);
+    const storedSize = Number(localStorage.getItem(SUCCESS_SOUND_SIZE_KEY) || '0');
+    if (!storedName) return null;
+    return { name: storedName, size: Number.isFinite(storedSize) ? storedSize : 0 };
+  });
 
   const [config, setConfig] = useState({
     host: localStorage.getItem('db_host') || '',
@@ -113,6 +125,83 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     };
     reader.readAsText(file);
     e.target.value = '';
+  };
+
+  const handleSuccessSoundUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isAllowedType =
+      file.type === 'audio/mpeg' ||
+      file.type === 'audio/mp3' ||
+      file.type === 'audio/wav' ||
+      file.type === 'audio/x-wav' ||
+      file.type === 'audio/wave' ||
+      /\.(mp3|wav)$/i.test(file.name);
+
+    if (!isAllowedType) {
+      setSyncStatus('Ошибка: загружайте только mp3 или wav');
+      setTimeout(() => setSyncStatus(null), 2500);
+      e.target.value = '';
+      return;
+    }
+
+    if (file.size > MAX_SUCCESS_SOUND_FILE_BYTES) {
+      setSyncStatus('Ошибка: файл слишком большой (макс. 2MB)');
+      setTimeout(() => setSyncStatus(null), 2500);
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      if (!dataUrl.startsWith('data:audio/')) {
+        setSyncStatus('Ошибка: не удалось прочитать аудио');
+        setTimeout(() => setSyncStatus(null), 2500);
+        return;
+      }
+      localStorage.setItem(SUCCESS_SOUND_DATA_KEY, dataUrl);
+      localStorage.setItem(SUCCESS_SOUND_NAME_KEY, file.name);
+      localStorage.setItem(SUCCESS_SOUND_SIZE_KEY, `${file.size}`);
+      setSuccessSoundMeta({ name: file.name, size: file.size });
+      window.dispatchEvent(new CustomEvent('faceclock:success-sound-updated'));
+      setSyncStatus('Звук успешно сохранен');
+      setTimeout(() => setSyncStatus(null), 2000);
+    };
+    reader.onerror = () => {
+      setSyncStatus('Ошибка чтения аудио');
+      setTimeout(() => setSyncStatus(null), 2500);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleRemoveSuccessSound = () => {
+    localStorage.removeItem(SUCCESS_SOUND_DATA_KEY);
+    localStorage.removeItem(SUCCESS_SOUND_NAME_KEY);
+    localStorage.removeItem(SUCCESS_SOUND_SIZE_KEY);
+    setSuccessSoundMeta(null);
+    window.dispatchEvent(new CustomEvent('faceclock:success-sound-updated'));
+    setSyncStatus('Кастомный звук удален');
+    setTimeout(() => setSyncStatus(null), 2000);
+  };
+
+  const handleTestSuccessSound = async () => {
+    const dataUrl = localStorage.getItem(SUCCESS_SOUND_DATA_KEY);
+    if (!dataUrl) {
+      setSyncStatus('Сначала загрузите mp3/wav');
+      setTimeout(() => setSyncStatus(null), 2000);
+      return;
+    }
+    try {
+      const audio = new Audio(dataUrl);
+      audio.volume = 1;
+      await audio.play();
+    } catch (e) {
+      setSyncStatus('Не удалось проиграть звук');
+      setTimeout(() => setSyncStatus(null), 2000);
+    }
   };
 
   const mapConfigKey = (key: string, val: string, cfg: any) => {
@@ -363,6 +452,46 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 </div>
               ))}
             </form>
+
+            <div className="bg-white/5 p-5 md:p-8 rounded-[2rem] border border-white/5 shadow-2xl">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest">Звук успешной фиксации</p>
+                  <p className="text-xs text-white/80 mt-2">
+                    {successSoundMeta
+                      ? `Файл: ${successSoundMeta.name} (${(successSoundMeta.size / 1024).toFixed(0)} KB)`
+                      : 'Сейчас используется встроенный beep'}
+                  </p>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <input
+                    type="file"
+                    accept=".mp3,.wav,audio/mpeg,audio/wav,audio/x-wav,audio/wave"
+                    ref={successSoundFileInputRef}
+                    onChange={handleSuccessSoundUpload}
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => successSoundFileInputRef.current?.click()}
+                    className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/10 text-[10px] font-black uppercase tracking-widest flex items-center gap-2"
+                  >
+                    <Volume2 size={14} className="text-emerald-500" /> Загрузить mp3/wav
+                  </button>
+                  <button
+                    onClick={handleTestSuccessSound}
+                    className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/10 text-[10px] font-black uppercase tracking-widest flex items-center gap-2"
+                  >
+                    <Play size={14} className="text-blue-400" /> Тест
+                  </button>
+                  <button
+                    onClick={handleRemoveSuccessSound}
+                    className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/10 text-[10px] font-black uppercase tracking-widest flex items-center gap-2"
+                  >
+                    <Trash2 size={14} className="text-red-400" /> Удалить
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
