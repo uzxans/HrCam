@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">HrCam</string>
+    <string name="title_activity_main">HrCam</string>
+    <string name="package_name">com.systemreg.hrcam</string>
+    <string name="custom_url_scheme">com.systemreg.hrcam</string>
+</resources>
