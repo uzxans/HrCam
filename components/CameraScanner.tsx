@@ -27,7 +27,7 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const isInitializingRef = useRef(false);
-  const successAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [scanStatus, setScanStatus] = useState<'loading' | 'searching' | 'success' | 'duplicate' | 'cooldown' | 'error'>('loading');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -41,6 +41,55 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   const lastDuplicateShownRef = useRef<number>(0);
   const lastTooFarHintTimeRef = useRef<number>(0);
   const tooFarHintTimerRef = useRef<number | null>(null);
+
+  const getAudioContext = useCallback((): AudioContext | null => {
+    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextCtor) return null;
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContextCtor();
+    }
+    return audioContextRef.current;
+  }, []);
+
+  const unlockAudio = useCallback(async () => {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume();
+      } catch (e) {
+        // Keep silent; next user interaction will retry.
+      }
+    }
+  }, [getAudioContext]);
+
+  const playSuccessTone = useCallback(async () => {
+    try {
+      const ctx = getAudioContext();
+      if (!ctx) return;
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
+      if (ctx.state === 'suspended') return;
+
+      const startAt = ctx.currentTime + 0.01;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(0.2, startAt + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.22);
+      gain.connect(ctx.destination);
+
+      const oscillator = ctx.createOscillator();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, startAt);
+      oscillator.frequency.linearRampToValueAtTime(1320, startAt + 0.18);
+      oscillator.connect(gain);
+      oscillator.start(startAt);
+      oscillator.stop(startAt + 0.22);
+    } catch (e) {
+      // Do not block recognition flow when audio cannot play.
+    }
+  }, [getAudioContext]);
 
   const getFaceCoverageRatio = useCallback((detection: any, video: HTMLVideoElement): number => {
     if (!detection || !video.videoWidth || !video.videoHeight) return 0;
@@ -183,9 +232,21 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   }, [onError]);
 
   useEffect(() => {
-    successAudioRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-    successAudioRef.current.preload = 'auto';
-  }, []);
+    const handleUnlock = () => {
+      void unlockAudio();
+    };
+
+    window.addEventListener('pointerdown', handleUnlock, { passive: true });
+    window.addEventListener('touchstart', handleUnlock, { passive: true });
+    window.addEventListener('keydown', handleUnlock);
+    void unlockAudio();
+
+    return () => {
+      window.removeEventListener('pointerdown', handleUnlock);
+      window.removeEventListener('touchstart', handleUnlock);
+      window.removeEventListener('keydown', handleUnlock);
+    };
+  }, [unlockAudio]);
 
   useEffect(() => {
     if (!stream || scanStatus === 'loading' || scanStatus === 'error') return;
@@ -257,7 +318,7 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
                 const type = (!lastLog || lastLog.type === AttendanceType.EXIT) ? AttendanceType.ENTRY : AttendanceType.EXIT;
                 onScanComplete(emp, type);
                 
-                successAudioRef.current?.play().catch(() => {});
+                void playSuccessTone();
                 setScanStatus('success');
               } finally {
                 setIsProcessing(false);
@@ -281,10 +342,13 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
 
     loop();
     return () => { active = false; clearTimeout(timer); };
-  }, [stream, scanStatus, powerMode, onScanComplete, onWake, onDenied, isProcessing, getFaceCoverageRatio, showTooFarHint]);
+  }, [stream, scanStatus, powerMode, onScanComplete, onWake, onDenied, isProcessing, getFaceCoverageRatio, showTooFarHint, playSuccessTone]);
 
   useEffect(() => {
     return () => {
+      if (audioContextRef.current) {
+        void audioContextRef.current.close().catch(() => {});
+      }
       if (tooFarHintTimerRef.current) {
         window.clearTimeout(tooFarHintTimerRef.current);
       }
