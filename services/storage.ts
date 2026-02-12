@@ -123,32 +123,31 @@ export const getLastLogForEmployee = (employeeId: string): AttendanceLog | undef
 };
 
 export const getAttendancePairs = (limit?: number) => {
-  const logs = getLogs().filter(log => !log.synced);
-  const users: Record<string, { iduser: string, date: string, start: string, end: string, logIds: string[] }> = {};
+  const logs = getLogs()
+    .filter(log => !log.synced)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-  logs.forEach(log => {
+  const records = logs.map((log) => {
     const date = log.timestamp.split('T')[0];
-    const time = new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const key = `${log.employeeId}_${date}`;
-
-    if (!users[key]) {
-      users[key] = { iduser: log.employeeId, date, start: '', end: '', logIds: [] };
-    }
-    
-    users[key].logIds.push(log.id);
-
-    if (log.type === AttendanceType.ENTRY) {
-      if (!users[key].start || time < users[key].start) users[key].start = time;
-    } else {
-      if (!users[key].end || time > users[key].end) users[key].end = time;
-    }
+    const time = new Date(log.timestamp).toLocaleTimeString('ru-RU', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+    return {
+      iduser: log.employeeId,
+      date,
+      start: log.type === AttendanceType.ENTRY ? time : '',
+      end: log.type === AttendanceType.EXIT ? time : '',
+      logIds: [log.id],
+    };
   });
 
-  const pairs = Object.values(users);
   if (typeof limit === 'number' && limit > 0) {
-    return pairs.slice(0, limit);
+    return records.slice(0, limit);
   }
-  return pairs;
+  return records;
 };
 
 export const addDeniedAttempt = (photoBase64: string): void => {

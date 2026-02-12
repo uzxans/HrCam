@@ -73,6 +73,7 @@ $dbHost = (string)($input['db_host'] ?? getenv('DB_HOST') ?: '');
 $dbName = (string)($input['db_name'] ?? getenv('DB_NAME') ?: '');
 $dbUser = (string)($input['db_user'] ?? getenv('DB_USER') ?: '');
 $dbPass = (string)($input['db_pass'] ?? getenv('DB_PASS') ?: '');
+$objectId = trim((string)($input['object_id'] ?? $input['objectId'] ?? ''));
 $table = normalizeIdentifier((string)($input['table'] ?? 'time_hr'), 'time_hr');
 $records = $input['data'] ?? [];
 
@@ -96,7 +97,14 @@ try {
 
     $pdo->beginTransaction();
 
-    $selectStmt = $pdo->prepare("SELECT id, `start`, `end` FROM `{$table}` WHERE iduser = :iduser AND `date` = :date LIMIT 1");
+    $openShiftStmt = $pdo->prepare("
+        SELECT id, `date`, `start`, `end`
+        FROM `{$table}`
+        WHERE iduser = :iduser
+          AND (`end` IS NULL OR `end` = '' OR `end` = '00:00:00')
+        ORDER BY `date` DESC, `id` DESC
+        LIMIT 1
+    ");
     $insertStmt = $pdo->prepare("INSERT INTO `{$table}` (iduser, `date`, `start`, `end`) VALUES (:iduser, :date, :start, :end)");
     $updateStmt = $pdo->prepare("UPDATE `{$table}` SET `start` = :start, `end` = :end WHERE id = :id");
 
@@ -114,20 +122,74 @@ try {
         $dateValue = normalizeDateValue((string)($row['date'] ?? ($row['data'] ?? '')));
         $startValue = normalizeTimeValue(isset($row['start']) ? (string)$row['start'] : null);
         $endValue = normalizeTimeValue(isset($row['end']) ? (string)$row['end'] : null);
+        $hasStart = $startValue !== null && $startValue !== '';
+        $hasEnd = $endValue !== null && $endValue !== '';
 
-        if ($iduser === '' || $dateValue === null) {
+        if ($iduser === '' || $dateValue === null || (!$hasStart && !$hasEnd)) {
             $skipped++;
             continue;
         }
 
-        $selectStmt->execute([':iduser' => $iduser, ':date' => $dateValue]);
-        $existing = $selectStmt->fetch();
+        $openShiftStmt->execute([':iduser' => $iduser]);
+        $openShift = $openShiftStmt->fetch();
 
-        if ($existing) {
-            $newStart = minTime($existing['start'], $startValue);
-            $newEnd = maxTime($existing['end'], $endValue);
+        if ($hasStart && !$hasEnd) {
+            // Entry event: if no open shift, open a new one for current day.
+            if (!$openShift) {
+                $insertStmt->execute([
+                    ':iduser' => $iduser,
+                    ':date' => $dateValue,
+                    ':start' => $startValue,
+                    ':end' => '',
+                ]);
+                $inserted++;
+                continue;
+            }
+
+            // Open shift exists - keep one open shift and preserve earliest start.
+            $newStart = minTime($openShift['start'], $startValue);
+            if ($newStart !== ($openShift['start'] ?? null)) {
+                $updateStmt->execute([
+                    ':id' => $openShift['id'],
+                    ':start' => $newStart,
+                    ':end' => $openShift['end'],
+                ]);
+                $updated++;
+            } else {
+                $skipped++;
+            }
+            continue;
+        }
+
+        if (!$hasStart && $hasEnd) {
+            // Exit event: close latest open shift if exists, otherwise write standalone record.
+            if ($openShift) {
+                $newEnd = maxTime($openShift['end'], $endValue);
+                $updateStmt->execute([
+                    ':id' => $openShift['id'],
+                    ':start' => $openShift['start'],
+                    ':end' => $newEnd,
+                ]);
+                $updated++;
+                continue;
+            }
+
+            $insertStmt->execute([
+                ':iduser' => $iduser,
+                ':date' => $dateValue,
+                ':start' => '',
+                ':end' => $endValue,
+            ]);
+            $inserted++;
+            continue;
+        }
+
+        // Fallback for rows that include both start and end.
+        if ($openShift) {
+            $newStart = minTime($openShift['start'], $startValue);
+            $newEnd = maxTime($openShift['end'], $endValue);
             $updateStmt->execute([
-                ':id' => $existing['id'],
+                ':id' => $openShift['id'],
                 ':start' => $newStart,
                 ':end' => $newEnd,
             ]);
@@ -149,6 +211,7 @@ try {
         'inserted' => $inserted,
         'updated' => $updated,
         'skipped' => $skipped,
+        'object_id' => $objectId,
     ]);
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {

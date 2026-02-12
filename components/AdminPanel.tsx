@@ -19,6 +19,11 @@ const SUCCESS_SOUND_DATA_KEY = 'faceclock_success_sound_data_url';
 const SUCCESS_SOUND_NAME_KEY = 'faceclock_success_sound_name';
 const SUCCESS_SOUND_SIZE_KEY = 'faceclock_success_sound_size';
 const MAX_SUCCESS_SOUND_FILE_BYTES = 2 * 1024 * 1024; // 2MB
+const HOURLY_SQL_SYNC_LAST_SLOT_KEY = 'faceclock_sql_last_hourly_slot';
+const HYBRID_SQL_SYNC_LAST_TS_KEY = 'faceclock_sql_last_hybrid_ts';
+const AUTO_EMPLOYEE_SYNC_LAST_TS_KEY = 'faceclock_employee_sync_ts';
+const EMPLOYEE_SYNC_INDICATOR_KEY = 'faceclock_employee_sync_indicator';
+const ACTIVE_OBJECT_ID_KEY = 'faceclock_active_object_id';
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -82,13 +87,39 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     return `db_${key}`;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    const prevObjectId = String(localStorage.getItem('db_object') || localStorage.getItem('db_objectId') || '').trim();
+    const nextObjectId = String(config.objectId || '').trim();
+
     Object.entries(config).forEach(([k, v]) => {
       const storageKey = getConfigStorageKey(k);
       localStorage.setItem(storageKey, v);
     });
     localStorage.removeItem('db_objectId');
-    setSyncStatus('Настройки сохранены');
+
+    const isObjectChanged = prevObjectId !== '' && nextObjectId !== '' && prevObjectId !== nextObjectId;
+    if (isObjectChanged) {
+      await storage.clearAppData();
+      localStorage.removeItem(HOURLY_SQL_SYNC_LAST_SLOT_KEY);
+      localStorage.removeItem(HYBRID_SQL_SYNC_LAST_TS_KEY);
+      localStorage.removeItem(AUTO_EMPLOYEE_SYNC_LAST_TS_KEY);
+      localStorage.removeItem(EMPLOYEE_SYNC_INDICATOR_KEY);
+      localStorage.setItem(ACTIVE_OBJECT_ID_KEY, nextObjectId);
+
+      setEmployees([]);
+      setLogs([]);
+      window.dispatchEvent(new CustomEvent('faceclock:employees-updated', {
+        detail: { updated: 0, removed: 0, at: Date.now() }
+      }));
+      setSyncStatus('Объект изменен: кеш очищен, выполните синхронизацию');
+    } else {
+      if (nextObjectId) {
+        localStorage.setItem(ACTIVE_OBJECT_ID_KEY, nextObjectId);
+      }
+      setSyncStatus('Настройки сохранены');
+    }
+
+    window.dispatchEvent(new CustomEvent('faceclock:config-updated'));
     setTimeout(() => setSyncStatus(null), 2000);
   };
 

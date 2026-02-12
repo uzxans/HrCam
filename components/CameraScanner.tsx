@@ -405,8 +405,8 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
 
   useEffect(() => {
     if (scanStatus === 'success' || scanStatus === 'duplicate') {
-      // Fast reset to keep scanner active and show a short feedback overlay.
-      const holdMs = scanStatus === 'success' ? 800 : 1200;
+      // Keep a longer success pause so one employee can move away before next scan.
+      const holdMs = scanStatus === 'success' ? 3000 : 1200;
       const t = setTimeout(() => {
         setScanStatus('cooldown');
         setTimeout(() => {
@@ -445,13 +445,6 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
       
       <div className={`absolute inset-0 bg-black pointer-events-none transition-opacity duration-1000 z-40 ${powerMode === 'DIMMED' ? 'opacity-70' : powerMode === 'SLEEP' ? 'opacity-98' : 'opacity-0'}`} />
       
-      {scanStatus === 'loading' && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-gray-950">
-           <Loader2 className="animate-spin text-emerald-500 w-16 h-16 mb-6" />
-           <p className="text-[10px] font-black uppercase tracking-[0.4em] text-emerald-500 animate-pulse">Биометрия: Загрузка нейросети...</p>
-        </div>
-      )}
-
       {isProcessing && (
         <div className="absolute inset-0 z-[55] pointer-events-none flex items-center justify-center">
           <div className="bg-black/75 border border-emerald-500/40 rounded-3xl px-8 py-5 flex items-center gap-3 shadow-2xl">

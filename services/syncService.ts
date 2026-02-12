@@ -145,6 +145,8 @@ export const syncAndSaveEmployees = async (
       db_user: config.user,
       db_pass: config.pass,
       db_table: config.table,
+      object_id: config.objectId || '41',
+      objectId: config.objectId || '41',
       query_params: { object: config.objectId || '41', status: config.activeStatus || '100' },
       fields: ['id', 'full_name', 'photo', 'status']
     })
@@ -253,6 +255,8 @@ export const syncAttendanceToCloud = async (
       db_name: config.name,
       db_user: config.user,
       db_pass: config.pass,
+      object_id: config.objectId || '',
+      objectId: config.objectId || '',
       table: config.table,
       data: pairs.map(({ iduser, date, start, end }) => ({ iduser, date, start, end }))
     };
@@ -265,8 +269,8 @@ export const syncAttendanceToCloud = async (
     });
 
     if (response.ok) {
-      const payload = await response.json().catch(() => null);
-      if (payload?.ok === false) return false;
+      const resultPayload = await response.json().catch(() => null);
+      if (resultPayload?.ok === false) return false;
       const allLogIds = pairs.flatMap(p => p.logIds);
       storage.removeLogsByIds(allLogIds);
       storage.setLastSync();

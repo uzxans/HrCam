@@ -13,6 +13,7 @@ const HOURLY_SQL_SYNC_LAST_SLOT_KEY = 'faceclock_sql_last_hourly_slot';
 const HYBRID_SQL_SYNC_LAST_TS_KEY = 'faceclock_sql_last_hybrid_ts';
 const AUTO_EMPLOYEE_SYNC_LAST_TS_KEY = 'faceclock_employee_sync_ts';
 const EMPLOYEE_SYNC_INDICATOR_KEY = 'faceclock_employee_sync_indicator';
+const ACTIVE_OBJECT_ID_KEY = 'faceclock_active_object_id';
 const DIM_AFTER_MS = 30000;
 const SLEEP_AFTER_MS = 50000;
 const HYBRID_SQL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -109,6 +110,7 @@ const App: React.FC = () => {
     const apiUrl = localStorage.getItem('sync_api_url') || '';
     const syncTimeHrUrl = localStorage.getItem('sync_time_hr') || apiUrl;
     if (!syncTimeHrUrl) return false;
+    const objectId = localStorage.getItem('db_object') || localStorage.getItem('db_objectId') || '41';
 
     isCloudSyncingRef.current = true;
     setIsCloudSyncing(true);
@@ -120,6 +122,7 @@ const App: React.FC = () => {
         name: localStorage.getItem('db_name') || '',
         user: localStorage.getItem('db_user') || '',
         pass: localStorage.getItem('db_pass') || '',
+        objectId,
         table: 'time_hr'
       }, { maxPairs });
       return ok;
@@ -205,6 +208,25 @@ const App: React.FC = () => {
     const apiUrl = localStorage.getItem('sync_api_url');
     if (!apiUrl) return;
 
+    const currentObjectId = String(localStorage.getItem('db_object') || localStorage.getItem('db_objectId') || '41').trim();
+    const activeObjectId = String(localStorage.getItem(ACTIVE_OBJECT_ID_KEY) || '').trim();
+
+    if (!activeObjectId) {
+      localStorage.setItem(ACTIVE_OBJECT_ID_KEY, currentObjectId);
+    } else if (activeObjectId !== currentObjectId) {
+      await storage.clearAppData();
+      localStorage.removeItem(HOURLY_SQL_SYNC_LAST_SLOT_KEY);
+      localStorage.removeItem(HYBRID_SQL_SYNC_LAST_TS_KEY);
+      localStorage.removeItem(AUTO_EMPLOYEE_SYNC_LAST_TS_KEY);
+      localStorage.removeItem(EMPLOYEE_SYNC_INDICATOR_KEY);
+      setEmployeeSyncIndicator(null);
+      localStorage.setItem(ACTIVE_OBJECT_ID_KEY, currentObjectId);
+      window.dispatchEvent(new CustomEvent('faceclock:employees-updated', {
+        detail: { updated: 0, removed: 0, at: Date.now() }
+      }));
+      force = true;
+    }
+
     if (!force && !isIntervalDue(AUTO_EMPLOYEE_SYNC_LAST_TS_KEY, AUTO_EMPLOYEE_SYNC_INTERVAL_MS)) return;
 
     isEmployeeSyncingRef.current = true;
@@ -216,11 +238,12 @@ const App: React.FC = () => {
         user: localStorage.getItem('db_user') || '',
         pass: localStorage.getItem('db_pass') || '',
         table: localStorage.getItem('db_table') || 'hrapp',
-        objectId: localStorage.getItem('db_object') || localStorage.getItem('db_objectId') || '41',
+        objectId: currentObjectId,
         activeStatus: localStorage.getItem('db_status') || '100',
       });
       storeEmployeeSyncIndicator(result.count, result.removed);
       localStorage.setItem(AUTO_EMPLOYEE_SYNC_LAST_TS_KEY, Date.now().toString());
+      localStorage.setItem(ACTIVE_OBJECT_ID_KEY, currentObjectId);
     } catch (e) {
       // Stay silent in scanner mode and retry next cycle.
     } finally {
@@ -293,6 +316,17 @@ const App: React.FC = () => {
     return () => {
       window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [attemptHybridSqlSync, attemptEmployeeAutoSync]);
+
+  useEffect(() => {
+    const handleConfigUpdated = () => {
+      void attemptHybridSqlSync();
+      void attemptEmployeeAutoSync(true);
+    };
+    window.addEventListener('faceclock:config-updated', handleConfigUpdated);
+    return () => {
+      window.removeEventListener('faceclock:config-updated', handleConfigUpdated);
     };
   }, [attemptHybridSqlSync, attemptEmployeeAutoSync]);
 
