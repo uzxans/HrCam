@@ -7,6 +7,7 @@ import { Employee, AttendanceType, AppState } from './types';
 import * as storage from './services/storage';
 import { syncAndSaveEmployees, syncAttendanceToCloud } from './services/syncService';
 import * as tg from './services/telegramService';
+import { startProximityMonitoring, stopProximityMonitoring } from './services/proximityService';
 
 const ADMIN_PASSWORD = '6411131';
 const HOURLY_SQL_SYNC_LAST_SLOT_KEY = 'faceclock_sql_last_hourly_slot';
@@ -41,6 +42,8 @@ type EmployeeSyncIndicator = {
   updated: number;
   removed: number;
 };
+
+type ProximityState = 'UNKNOWN' | 'NEAR' | 'FAR';
 
 const readEmployeeSyncIndicator = (): EmployeeSyncIndicator | null => {
   try {
@@ -78,6 +81,7 @@ const App: React.FC = () => {
   // Power Management
   const [powerMode, setPowerMode] = useState<'ACTIVE' | 'DIMMED' | 'SLEEP'>('ACTIVE');
   const [lastActivity, setLastActivity] = useState(Date.now());
+  const [proximityState, setProximityState] = useState<ProximityState>('UNKNOWN');
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -252,7 +256,46 @@ const App: React.FC = () => {
   }, [storeEmployeeSyncIndicator]);
 
   useEffect(() => {
+    let active = true;
+    let removeListener: (() => Promise<void>) | null = null;
+
+    const start = async () => {
+      const listener = await startProximityMonitoring((event) => {
+        if (!active) return;
+        if (event.near) {
+          setProximityState('NEAR');
+          handleUserActivity();
+          return;
+        }
+        setProximityState('FAR');
+        setPowerMode('SLEEP');
+      });
+      if (listener) {
+        removeListener = () => listener.remove();
+      }
+    };
+
+    void start();
+    return () => {
+      active = false;
+      if (removeListener) {
+        void removeListener();
+      }
+      void stopProximityMonitoring();
+    };
+  }, [handleUserActivity]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
+      if (proximityState === 'FAR') {
+        if (powerMode !== 'SLEEP') setPowerMode('SLEEP');
+        return;
+      }
+      if (proximityState === 'NEAR') {
+        if (powerMode !== 'ACTIVE') setPowerMode('ACTIVE');
+        return;
+      }
+
       const idleMs = Date.now() - lastActivity;
       if (idleMs >= SLEEP_AFTER_MS) {
         if (powerMode !== 'SLEEP') setPowerMode('SLEEP');
@@ -263,7 +306,7 @@ const App: React.FC = () => {
       }
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [lastActivity, powerMode]);
+  }, [lastActivity, powerMode, proximityState]);
 
   useEffect(() => {
     const onPointer = () => handleUserActivity();
