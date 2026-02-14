@@ -61,7 +61,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     const activeStatus = Number(config.status || '100');
     const allEmployees = await storage.getEmployees();
     setEmployees(allEmployees.filter((emp) => Number(emp.status ?? activeStatus) === activeStatus));
-    setLogs(storage.getTodaysLogs().reverse());
+    setLogs(storage.getLogs().reverse().slice(0, 500));
   }, [config.status]);
 
   useEffect(() => {

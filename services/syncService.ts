@@ -269,8 +269,25 @@ export const syncAttendanceToCloud = async (
     });
 
     if (response.ok) {
-      const resultPayload = await response.json().catch(() => null);
-      if (resultPayload?.ok === false) return false;
+      const rawResponse = await response.text();
+      const resultPayload = (() => {
+        try {
+          return rawResponse ? JSON.parse(rawResponse) : null;
+        } catch (e) {
+          return null;
+        }
+      })();
+
+      // Never delete local logs unless backend explicitly confirms success.
+      if (!resultPayload || resultPayload.ok !== true) {
+        console.error('Cloud Sync Rejected: invalid server response', {
+          targetUrl,
+          status: response.status,
+          bodyPreview: rawResponse.slice(0, 250)
+        });
+        return false;
+      }
+
       const allLogIds = pairs.flatMap(p => p.logIds);
       storage.removeLogsByIds(allLogIds);
       storage.setLastSync();

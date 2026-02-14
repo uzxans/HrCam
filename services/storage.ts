@@ -111,8 +111,13 @@ export const removeLogsByIds = (logIds: string[]) => {
 };
 
 export const getTodaysLogs = (): AttendanceLog[] => {
-  const today = new Date().toISOString().split('T')[0];
-  return getLogs().filter(log => log.timestamp.startsWith(today));
+  const now = new Date();
+  const today = `${now.getFullYear()}-${`${now.getMonth() + 1}`.padStart(2, '0')}-${`${now.getDate()}`.padStart(2, '0')}`;
+  return getLogs().filter(log => {
+    const ts = new Date(log.timestamp);
+    const localDate = `${ts.getFullYear()}-${`${ts.getMonth() + 1}`.padStart(2, '0')}-${`${ts.getDate()}`.padStart(2, '0')}`;
+    return localDate === today;
+  });
 };
 
 export const getLastLogForEmployee = (employeeId: string): AttendanceLog | undefined => {
@@ -128,8 +133,9 @@ export const getAttendancePairs = (limit?: number) => {
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
   const records = logs.map((log) => {
-    const date = log.timestamp.split('T')[0];
-    const time = new Date(log.timestamp).toLocaleTimeString('ru-RU', {
+    const ts = new Date(log.timestamp);
+    const date = `${ts.getFullYear()}-${`${ts.getMonth() + 1}`.padStart(2, '0')}-${`${ts.getDate()}`.padStart(2, '0')}`;
+    const time = ts.toLocaleTimeString('ru-RU', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
