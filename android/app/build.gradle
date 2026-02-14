@@ -1,4 +1,35 @@
 apply plugin: 'com.android.application'
+import java.util.Locale
+
+tasks.register("normalizeInvalidResourceFilenames") {
+    doLast {
+        def invalidFiles = fileTree("src/main/res").matching {
+            include "**/* *.*"
+        }.files
+
+        invalidFiles.each { File sourceFile ->
+            def targetName = sourceFile.name.replace(' ', '_').toLowerCase(Locale.ROOT)
+            def targetFile = new File(sourceFile.parentFile, targetName)
+
+            if (sourceFile.absolutePath == targetFile.absolutePath) {
+                return
+            }
+
+            if (targetFile.exists()) {
+                logger.lifecycle("Deleting duplicate invalid resource file: ${sourceFile.name}")
+                if (!sourceFile.delete()) {
+                    throw new org.gradle.api.GradleException("Failed to delete ${sourceFile.absolutePath}")
+                }
+                return
+            }
+
+            logger.lifecycle("Renaming invalid resource file: ${sourceFile.name} -> ${targetFile.name}")
+            if (!sourceFile.renameTo(targetFile)) {
+                throw new org.gradle.api.GradleException("Failed to rename ${sourceFile.absolutePath} to ${targetFile.absolutePath}")
+            }
+        }
+    }
+}
 
 android {
     namespace = "com.systemreg.hrcam"
@@ -23,6 +54,8 @@ android {
         }
     }
 }
+
+preBuild.dependsOn("normalizeInvalidResourceFilenames")
 
 repositories {
     flatDir{
