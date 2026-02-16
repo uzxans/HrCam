@@ -146,6 +146,9 @@ export const getAttendancePairs = (limit?: number) => {
       date,
       start: log.type === AttendanceType.ENTRY ? time : '',
       end: log.type === AttendanceType.EXIT ? time : '',
+      timestamp: log.timestamp,
+      type: log.type,
+      employeeName: log.employeeName,
       logIds: [log.id],
     };
   });

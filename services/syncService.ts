@@ -247,7 +247,6 @@ export const syncAttendanceToCloud = async (
   if (pairs.length === 0) return true;
   const targetUrl = (config.syncTimeHrUrl || config.apiUrl || '').trim();
   if (!targetUrl) return false;
-  const shouldSendAction = !config.syncTimeHrUrl || config.syncTimeHrUrl.trim() === config.apiUrl.trim();
 
   try {
     const payload: Record<string, unknown> = {
@@ -258,9 +257,19 @@ export const syncAttendanceToCloud = async (
       object_id: config.objectId || '',
       objectId: config.objectId || '',
       table: config.table,
-      data: pairs.map(({ iduser, date, start, end }) => ({ iduser, date, start, end }))
+      action: 'sync_time_hr',
+      data: pairs.map(({ iduser, date, start, end, timestamp, type, employeeName }) => ({
+        iduser,
+        date,
+        start,
+        end,
+        timestamp,
+        type,
+        employeeName,
+      }))
     };
-    if (shouldSendAction) payload.action = 'sync_time_hr';
+    payload.records = payload.data;
+    payload.logs = payload.data;
 
     const response = await fetchWithTimeout(targetUrl, {
       method: 'POST',
@@ -278,8 +287,16 @@ export const syncAttendanceToCloud = async (
         }
       })();
 
-      // Never delete local logs unless backend explicitly confirms success.
-      if (!resultPayload || resultPayload.ok !== true) {
+      const hasExplicitFailure =
+        (resultPayload && resultPayload.ok === false) ||
+        (resultPayload && resultPayload.success === false) ||
+        (resultPayload && String(resultPayload.status || '').toLowerCase() === 'error');
+
+      const rawHasFailureMarker =
+        !resultPayload &&
+        /"ok"\s*:\s*false|error|exception|fatal/i.test(rawResponse || '');
+
+      if (hasExplicitFailure || rawHasFailureMarker) {
         console.error('Cloud Sync Rejected: invalid server response', {
           targetUrl,
           status: response.status,

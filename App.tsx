@@ -112,7 +112,7 @@ const App: React.FC = () => {
   const attemptCloudSync = useCallback(async (maxPairs?: number): Promise<boolean> => {
     if (!navigator.onLine || isCloudSyncingRef.current) return false;
     const apiUrl = localStorage.getItem('sync_api_url') || '';
-    const syncTimeHrUrl = localStorage.getItem('sync_time_hr') || apiUrl;
+    const syncTimeHrUrl = localStorage.getItem('sync_time_hr') || '';
     if (!syncTimeHrUrl) return false;
     const objectId = localStorage.getItem('db_object') || localStorage.getItem('db_objectId') || '41';
 

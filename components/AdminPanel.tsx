@@ -311,16 +311,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   };
 
   const manualCloudSync = async () => {
+    if (!config.syncTimeHr) {
+      setSyncStatus('Ошибка: укажите syncTimeHr URL');
+      setTimeout(() => setSyncStatus(null), 2500);
+      return;
+    }
     setIsSyncing(true);
     try {
       const ok = await syncAttendanceToCloud({
         ...config,
         table: 'time_hr',
-        syncTimeHrUrl: config.syncTimeHr || config.apiUrl,
+        apiUrl: config.apiUrl || config.syncTimeHr,
+        syncTimeHrUrl: config.syncTimeHr,
       });
       if (ok) {
         setSyncStatus('SQL Синхронизация: OK');
         refreshData();
+      } else {
+        setSyncStatus('SQL Синхронизация: ошибка ответа сервера');
       }
     } finally {
       setIsSyncing(false);
