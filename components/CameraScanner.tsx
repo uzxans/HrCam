@@ -28,6 +28,7 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
   const TOO_FAR_HINT_VISIBLE_MS = 1200;
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const isInitializingRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const customSuccessAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -180,6 +181,18 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
     void backfillDescriptorsFromPhotos(data);
   }, [backfillDescriptorsFromPhotos]);
 
+  const stopActiveStream = useCallback(() => {
+    const currentStream = streamRef.current;
+    if (currentStream) {
+      currentStream.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setStream(null);
+  }, []);
+
   const initSystem = useCallback(async () => {
     try {
       setScanStatus('loading');
@@ -221,7 +234,50 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
 
   useEffect(() => {
     if (isInitializingRef.current) return;
+    let cancelled = false;
     isInitializingRef.current = true;
+
+    const requestCameraStream = async (): Promise<MediaStream> => {
+      const cameraOptions: MediaStreamConstraints[] = [
+        {
+          video: {
+            facingMode: { ideal: 'user' },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 30 },
+          },
+          audio: false,
+        },
+        {
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 30 },
+          },
+          audio: false,
+        },
+        {
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 30 },
+          },
+          audio: false,
+        },
+        { video: true, audio: false },
+      ];
+
+      let lastError: unknown = null;
+      for (const constraints of cameraOptions) {
+        try {
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      throw lastError ?? new Error('Не удалось запустить камеру');
+    };
 
     const startCamera = async () => {
       try {
@@ -229,39 +285,47 @@ const CameraScanner: React.FC<CameraScannerProps> = ({
           throw new Error("Браузер блокирует доступ к камере. Убедитесь, что сайт открыт через HTTPS.");
         }
 
-        const constraints = {
-          video: { 
-            facingMode: 'user', 
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            frameRate: { ideal: 30 }
-          },
-          audio: false
-        };
+        stopActiveStream();
+        const s = await requestCameraStream();
+        if (cancelled) {
+          s.getTracks().forEach((track) => track.stop());
+          return;
+        }
 
-        const s = await navigator.mediaDevices.getUserMedia(constraints);
+        streamRef.current = s;
         setStream(s);
         if (videoRef.current) {
           videoRef.current.srcObject = s;
           videoRef.current.setAttribute('playsinline', 'true');
-          await videoRef.current.play();
+          videoRef.current.muted = true;
+          await videoRef.current.play().catch(() => {});
         }
       } catch (e: any) {
+        if (cancelled) return;
+        const errorName = String(e?.name || '');
+        const message =
+          errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError'
+            ? 'Камера недоступна: дайте разрешение в настройках Android.'
+            : errorName === 'NotFoundError' || errorName === 'DevicesNotFoundError'
+            ? 'Камера не найдена на устройстве.'
+            : errorName === 'NotReadableError' || errorName === 'TrackStartError'
+            ? 'Камера занята другим приложением.'
+            : e.message || "Камера недоступна. Проверьте разрешения.";
         setScanStatus('error');
-        onError(e.message || "Камера недоступна. Проверьте разрешения.");
+        onError(message);
       } finally {
         isInitializingRef.current = false;
       }
     };
 
-    startCamera();
+    void startCamera();
 
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop());
-      }
+      cancelled = true;
+      stopActiveStream();
+      isInitializingRef.current = false;
     };
-  }, [onError]);
+  }, [onError, stopActiveStream]);
 
   useEffect(() => {
     const handleUnlock = () => {

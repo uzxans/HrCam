@@ -82,6 +82,9 @@ const App: React.FC = () => {
   const [powerMode, setPowerMode] = useState<'ACTIVE' | 'DIMMED' | 'SLEEP'>('ACTIVE');
   const [lastActivity, setLastActivity] = useState(Date.now());
   const [proximityState, setProximityState] = useState<ProximityState>('UNKNOWN');
+  const handleCameraError = useCallback((message: string) => {
+    console.error('[CameraScanner]', message);
+  }, []);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -268,7 +271,6 @@ const App: React.FC = () => {
           return;
         }
         setProximityState('FAR');
-        setPowerMode('SLEEP');
       });
       if (listener) {
         removeListener = () => listener.remove();
@@ -287,10 +289,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      if (proximityState === 'FAR') {
-        if (powerMode !== 'SLEEP') setPowerMode('SLEEP');
-        return;
-      }
       if (proximityState === 'NEAR') {
         if (powerMode !== 'ACTIVE') setPowerMode('ACTIVE');
         return;
@@ -393,7 +391,7 @@ const App: React.FC = () => {
           <CameraScanner 
             onScanComplete={handleScanComplete} 
             onDenied={handleDenied}
-            onError={() => {}}
+            onError={handleCameraError}
             powerMode={powerMode}
             onWake={handleUserActivity}
           />
