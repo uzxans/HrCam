@@ -9,8 +9,8 @@ import android.hardware.SensorManager;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import com.getcapacitor.annotation.PluginMethod;
 
 @CapacitorPlugin(name = "Proximity")
 public class ProximityPlugin extends Plugin implements SensorEventListener {
