@@ -24,6 +24,28 @@ allprojects {
     }
 }
 
+// Force Java 17 for Capacitor Android module to support JDK 17 environments.
+subprojects { subproject ->
+    if (subproject.name == 'capacitor-android') {
+        subproject.afterEvaluate {
+            if (subproject.hasProperty('android')) {
+                subproject.android {
+                    compileOptions {
+                        sourceCompatibility JavaVersion.VERSION_17
+                        targetCompatibility JavaVersion.VERSION_17
+                    }
+                }
+            }
+
+            subproject.tasks.withType(org.gradle.api.tasks.compile.JavaCompile).configureEach {
+                sourceCompatibility = JavaVersion.VERSION_17.toString()
+                targetCompatibility = JavaVersion.VERSION_17.toString()
+                options.release = 17
+            }
+        }
+    }
+}
+
 task clean(type: Delete) {
     delete rootProject.buildDir
 }
