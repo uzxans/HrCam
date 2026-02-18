@@ -104,12 +104,12 @@ export const getUpdates = async (botToken: string, offset: number) => {
   }
 };
 
-export const sendTelegramReport = async (
+export async function sendTelegramReport(
   botToken: string, 
   chatId: string, 
   logs: AttendanceLog[],
   reportText: string
-) => {
+) {
   if (!logs.length) {
     return { ok: false, description: 'Нет данных для отчета' };
   }
@@ -155,7 +155,7 @@ export const sendTelegramReport = async (
   } catch (error) {
     return null;
   }
-};
+}
 
 export const sendDeniedPhoto = async (
   botToken: string,
